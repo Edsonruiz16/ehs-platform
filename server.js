@@ -303,8 +303,8 @@ function buildFilter(q, dateField = 'date') {
   const df = {};
   if (q.from) df.$gte = new Date(q.from);
   if (q.to) df.$lte = new Date(q.to);
-  if (q.year) {
-    const y = Number(q.year);
+  if (q.year || q.month) {
+    const y = Number(q.year) || new Date().getFullYear(); // si no hay año, usa el actual
     if (q.month) { const m = Number(q.month) - 1; df.$gte = new Date(y, m, 1); df.$lte = new Date(y, m + 1, 0, 23, 59, 59); }
     else { df.$gte = new Date(y, 0, 1); df.$lte = new Date(y, 11, 31, 23, 59, 59); }
   }
