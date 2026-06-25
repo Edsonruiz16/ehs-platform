@@ -7,7 +7,13 @@
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
-  "keywords": ["ehs", "hse", "safety", "heinrich", "mongodb"],
+  "keywords": [
+    "ehs",
+    "hse",
+    "safety",
+    "heinrich",
+    "mongodb"
+  ],
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -16,7 +22,10 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.5.1",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.0.0",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.2.0"
   }
 }

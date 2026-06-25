@@ -3,8 +3,8 @@
  * Sirve la página única (public/index.html) + API REST sobre MongoDB.
  * Núcleo: Pirámide de Heinrich (heinrich_records) + motor único de acciones (actions).
  */
-require('dotenv').config();
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
@@ -487,10 +487,21 @@ async function seedIfEmpty() {
 // ---------------------------------------------------------------------------
 // Arranque
 // ---------------------------------------------------------------------------
+// Si no hay cadena real configurada, arranca una MongoDB temporal en memoria (modo demo).
+async function resolveMongoUri() {
+  if (MONGODB_URI && !MONGODB_URI.includes('PEGAR_AQUI')) return MONGODB_URI;
+  console.log('[db] MONGODB_URI no configurada → iniciando MongoDB en memoria (DEMO; los datos NO persisten).');
+  const { MongoMemoryServer } = require('mongodb-memory-server');
+  const mem = await MongoMemoryServer.create();
+  global.__memServer = mem;
+  return mem.getUri('ehs_platform');
+}
+
 (async () => {
   try {
     mongoose.set('strictQuery', true);
-    await mongoose.connect(MONGODB_URI);
+    const uri = await resolveMongoUri();
+    await mongoose.connect(uri);
     console.log('[db] Conectado a MongoDB');
     await seedIfEmpty();
     app.listen(PORT, () => console.log(`[server] EHS Platform en http://localhost:${PORT}`));

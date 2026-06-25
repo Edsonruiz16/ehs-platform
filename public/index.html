@@ -34,7 +34,7 @@
 <body>
   <div id="root"></div>
 
-  <script type="text/babel">
+  <script type="text/babel-src" id="appsrc">
     const { useState, useEffect, useRef, useCallback } = React;
     const API = '/api';
 
@@ -458,6 +458,22 @@
     }
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  </script>
+
+  <!-- Carga: transforma el JSX con runtime CLÁSICO (sin imports) y ejecuta. -->
+  <script>
+    (function () {
+      try {
+        var src = document.getElementById('appsrc').textContent;
+        var out = Babel.transform(src, { presets: [['react', { runtime: 'classic' }]] }).code;
+        (0, eval)(out);
+      } catch (e) {
+        console.error(e);
+        document.getElementById('root').innerHTML =
+          '<pre style="padding:20px;color:#b91c1c;white-space:pre-wrap;font:13px monospace">Error al iniciar la app:\n' +
+          (e && e.message ? e.message : e) + '</pre>';
+      }
+    })();
   </script>
 </body>
 </html>
