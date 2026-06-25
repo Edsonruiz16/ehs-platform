@@ -1,19 +1,20 @@
-# EHS Platform — Gestión de Seguridad Industrial
+# EHS Platform — Una sola página
 
-Plataforma web EHS / HSE para captura, clasificación, visualización y seguimiento de seguridad industrial, con núcleo en la **Pirámide de Heinrich** y un **motor único de acciones** correctivas/preventivas.
+Plataforma EHS / HSE en **una sola página** con pestañas, sobre **MongoDB**. Núcleo en la **Pirámide de Heinrich** y un **motor único de acciones** correctivas/preventivas.
 
-> Observaciones STOP · Comisión de Seguridad e Higiene · Incidentes/Accidentes · Acciones IPERC · Importación Excel · Dashboard ejecutivo.
+> Un solo servidor Node sirve la página (`public/index.html`) **y** la API REST hacia MongoDB. Sin paso de build, sin framework de frontend que compilar.
 
 ---
 
-## ✨ Características
+## ✨ Módulos (todos en la misma página, como pestañas)
 
-- **Pirámide de Heinrich** consolidada automáticamente desde múltiples fuentes (directa e indirecta).
-- **Motor único de acciones**: toda acción —venga de STOP, Comisión, Incidente o IPERC— se centraliza para análisis global (abiertas / en proceso / cerradas / vencidas).
-- **Importación de Excel** con vista previa, mapeo de columnas, validación, anti-duplicados y log de importación.
-- **Dashboard ejecutivo** con pirámide, dona de acciones, tendencia mensual, rankings por área/máquina/responsable y distribución por origen.
-- **Roles y permisos** (ADMIN / CAPTURISTA / CONSULTA) con autenticación JWT.
-- **Semaforización** de riesgo (verde/amarillo/rojo) y de vencimiento de acciones.
+- **Dashboard** — pirámide de Heinrich, dona de acciones, tendencia mensual, rankings por área/máquina/responsable, distribución por origen. Con filtros (año, mes, área, origen).
+- **Observaciones STOP** — alta/edición/baja; alimenta pirámide + acciones.
+- **Comisión de Seguridad e Higiene** — hallazgos de inspección.
+- **Incidentes / Accidentes** — con severidad (1-5) y días perdidos.
+- **Acciones IPERC** — derivadas de matriz IPERC.
+- **Motor de Acciones** — repositorio único de todas las acciones, con semáforo de vencimiento.
+- **Importar Excel** — vista previa, mapeo de columnas, validación, anti-duplicados y log.
 
 ---
 
@@ -21,82 +22,58 @@ Plataforma web EHS / HSE para captura, clasificación, visualización y seguimie
 
 | Capa | Tecnología |
 |---|---|
-| Backend | Node.js · Express · TypeScript (arquitectura modular: routes → controller → service → model) |
-| Base de datos | MongoDB · Mongoose |
-| Auth | JWT + middleware de roles |
+| Servidor + API | Node.js · Express (un solo `server.js`) |
+| Base de datos | MongoDB · Mongoose (Atlas o local) |
+| Auth | JWT + bcrypt · roles ADMIN / CAPTURISTA / CONSULTA |
 | Excel | SheetJS (`xlsx`) |
-| Frontend | Next.js (App Router) · TypeScript · Tailwind CSS · Recharts |
-| Validación | Zod |
+| Frontend | **Una página**: React + Chart.js + Tailwind por CDN (sin build) |
+
+### Diseño clave
+- Cada fuente (STOP, Comisión, Incidente, Excel) **emite** un registro normalizado en `heinrich_records` (alimenta pirámide y dashboard) y, si trae acción + responsable, una entrada en `actions` (motor único).
+- **Riesgo** = `BAJO/MEDIO/ALTO`. **Severidad** = ordinal `1..5` del incidente (atributo, no nivel) → evita doble conteo.
+- Dashboard por agregaciones en lectura (rápido con índices).
 
 ---
 
-## 📐 Arquitectura y modelo de datos
-
-### Consolidación (clave del diseño)
-- Cada fuente guarda su documento de negocio **y emite**:
-  - un registro normalizado en **`heinrich_records`** (alimenta pirámide + dashboard), y
-  - si trae acción + responsable, una entrada en **`actions`** (motor único).
-- El dashboard se calcula por **agregaciones en lectura** sobre `heinrich_records` y `actions` (rápido con índices; aislado en `dashboard.service.ts` para migrar a snapshots si crece).
-
-### Niveles de la pirámide
-`ACTO_INSEGURO · CONDICION_INSEGURA · CASI_INCIDENTE · PRIMEROS_AUXILIOS · TRATAMIENTO_MEDICO · ACTIVIDAD_RESTRINGIDA · LOST_TIME · FATALIDAD`
-
-- **Riesgo** = `BAJO | MEDIO | ALTO` (atributo de acción/observación).
-- **Severidad** = ordinal `1..5` (atributo del incidente, **no** nivel) → evita doble conteo.
-
-### Colecciones
-`users · areas · machines · catalogs · heinrich_records · actions · observations_stop · observations_commission · incidents · iperc_actions · import_jobs`
-
----
-
-## 🗂️ Estructura del proyecto
+## 🗂️ Estructura
 
 ```
 ehs-platform/
-├── backend/
-│   ├── src/
-│   │   ├── config/         # env, conexión Mongo
-│   │   ├── constants/      # enums del dominio (niveles, riesgo, roles…)
-│   │   ├── middleware/     # auth (JWT/roles), errores, validación Zod
-│   │   ├── models/         # esquemas Mongoose
-│   │   ├── modules/        # auth, observationsStop, commission, incidents,
-│   │   │                   # iperc, actions, dashboard, catalogs, import
-│   │   ├── services/       # heinrich.service (emisión) · action.service (motor)
-│   │   ├── utils/          # ApiError, asyncHandler, filtros
-│   │   ├── routes/         # router principal
-│   │   ├── app.ts · server.ts · seed.ts
-│   └── package.json
-└── frontend/
-    ├── app/                # App Router: /login, dashboard, módulos
-    ├── components/         # Sidebar, KPIs, charts (pirámide, dona, barras…)
-    ├── lib/                # api client, auth context, helpers
-    └── package.json
+├── server.js            # Servidor único: modelos, API, consolidación, seed
+├── public/
+│   └── index.html       # La página única (todas las pestañas)
+├── package.json
+├── .env.example
+└── README.md
 ```
 
 ---
 
-## 🚀 Instalación y arranque (local)
+## 🚀 Puesta en marcha
 
-### Requisitos
+### 1) Requisitos
 - Node.js 18+
-- MongoDB en local (`mongodb://127.0.0.1:27017`) o Atlas.
+- Una base MongoDB (recomendado **MongoDB Atlas**, free tier).
 
-### 1) Backend
+### 2) Configurar MongoDB Atlas
+1. Crea un cluster gratuito en https://www.mongodb.com/atlas
+2. **Database Access** → crea un usuario/clave.
+3. **Network Access** → permite tu IP (o `0.0.0.0/0` para pruebas).
+4. **Connect → Drivers** → copia la cadena `mongodb+srv://…`.
+
+### 3) Variables de entorno
 ```bash
-cd backend
-cp .env.example .env          # ajusta MONGODB_URI y JWT_SECRET
-npm install
-npm run seed                  # crea admin + catálogos + datos demo
-npm run dev                   # API en http://localhost:4000/api
+cp .env.example .env
+# Edita .env y pega tu MONGODB_URI de Atlas + un JWT_SECRET propio
 ```
 
-### 2) Frontend
+### 4) Instalar y correr
 ```bash
-cd frontend
-cp .env.local.example .env.local
 npm install
-npm run dev                   # app en http://localhost:3000
+npm start
+# Abre http://localhost:4000
 ```
+La primera vez, si la base está vacía, se **siembran datos demo** automáticamente.
 
 ### Acceso demo
 | Rol | Correo | Password |
@@ -107,23 +84,28 @@ npm run dev                   # app en http://localhost:3000
 
 ---
 
-## 🔑 Variables de entorno
+## 🔑 Variables de entorno (`.env`)
 
-**backend/.env**
 ```
 PORT=4000
-MONGODB_URI=mongodb://127.0.0.1:27017/ehs_platform
-JWT_SECRET=cambia_este_secreto
+MONGODB_URI=mongodb+srv://usuario:password@cluster.mongodb.net/ehs_platform
+JWT_SECRET=un_secreto_largo_y_aleatorio
 JWT_EXPIRES_IN=8h
-CORS_ORIGIN=http://localhost:3000
+SEED_ON_START=true
 SEED_ADMIN_EMAIL=admin@ehs.local
 SEED_ADMIN_PASSWORD=Admin123*
 ```
 
-**frontend/.env.local**
-```
-NEXT_PUBLIC_API_URL=http://localhost:4000/api
-```
+---
+
+## ☁️ Despliegue (GitHub + host)
+
+1. Sube el repo a GitHub.
+2. Conéctalo en **Render / Railway / Fly.io** (cualquiera con Node):
+   - Build command: `npm install`
+   - Start command: `npm start`
+   - Variables de entorno: las de `.env` (sobre todo `MONGODB_URI` y `JWT_SECRET`).
+3. Listo: el mismo servicio sirve la página y la API.
 
 ---
 
@@ -131,33 +113,23 @@ NEXT_PUBLIC_API_URL=http://localhost:4000/api
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| POST | `/api/auth/login` | Login (devuelve JWT) |
-| GET | `/api/dashboard/overview` | Todos los widgets del dashboard (acepta filtros) |
-| GET | `/api/dashboard/pyramid` | Pirámide + tendencia + origen |
-| CRUD | `/api/observations-stop` | Observaciones STOP |
-| CRUD | `/api/commission` | Hallazgos de Comisión |
-| CRUD | `/api/incidents` | Incidentes / Accidentes |
-| CRUD | `/api/iperc` | Acciones IPERC |
-| GET / PATCH | `/api/actions`, `/api/actions/:id/status` | Motor de acciones |
+| POST | `/api/auth/login` | Login (JWT) |
+| GET | `/api/dashboard` | Datos del dashboard (acepta filtros) |
+| CRUD | `/api/stop` `/api/commission` `/api/incidents` `/api/iperc` | Fuentes EHS |
+| GET/PATCH | `/api/actions`, `/api/actions/:id/status`, `/api/actions/summary` | Motor de acciones |
 | POST | `/api/import/preview` · `/api/import/commit` | Importación Excel |
-| CRUD | `/api/areas` · `/api/machines` · `/api/catalogs` · `/api/users` | Catálogos |
+| GET | `/api/areas` | Catálogo de áreas |
 
-**Filtros globales** (query string): `year, month, from, to, area, machine, source, status, risk, responsible, level`.
+Filtros (query): `year, month, from, to, area, machine, source, status, risk, responsible, level`.
 
 ---
 
 ## 🗺️ Roadmap
-
-- [ ] UI completa de Comisión, Incidentes e IPERC (mismo patrón que STOP).
-- [ ] Exportación de tablas/reportes a Excel.
-- [ ] Carga de evidencias (archivos) y galería.
-- [ ] Notificaciones de vencimiento (email / in-app).
-- [ ] Permisos por planta/sitio y multi-tenant.
-- [ ] Indicadores ambientales y de salud ocupacional.
-- [ ] Auditoría/bitácora completa por registro.
-- [ ] Snapshots de dashboard precalculados (cron) para alto volumen.
-
----
+- [ ] Exportación de tablas a Excel.
+- [ ] Carga de evidencias (archivos).
+- [ ] Notificaciones de vencimiento.
+- [ ] Catálogos editables (áreas/máquinas) y gestión de usuarios desde la UI.
+- [ ] Permisos por planta/sitio.
 
 ## 📄 Licencia
 MIT.

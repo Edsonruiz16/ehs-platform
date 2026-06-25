@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EHS Platform — Seguridad Industrial</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: {
+        brand: { DEFAULT: '#0f3d5e', dark: '#0a2a42', light: '#1d6fa5' },
+      } } }
+    };
+  </script>
+  <style>
+    body { background:#f1f5f9; }
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:0.75rem; box-shadow:0 1px 3px rgba(15,23,42,.08); padding:1rem; }
+    .card-title { font-size:.72rem; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:.05em; margin-bottom:.6rem; }
+    .input { width:100%; border:1px solid #cbd5e1; border-radius:.5rem; padding:.5rem .75rem; font-size:.85rem; }
+    .input:focus { outline:none; box-shadow:0 0 0 2px #1d6fa5; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; border-radius:.5rem; padding:.5rem 1rem; font-size:.85rem; font-weight:500; cursor:pointer; }
+    .btn-primary { background:#0f3d5e; color:#fff; } .btn-primary:hover { background:#0a2a42; }
+    .btn-ghost { background:#f1f5f9; color:#334155; } .btn-ghost:hover { background:#e2e8f0; }
+    .badge { display:inline-flex; align-items:center; border-radius:9999px; padding:.1rem .5rem; font-size:.7rem; font-weight:600; }
+    table { width:100%; font-size:.82rem; }
+    th { text-align:left; font-size:.68rem; text-transform:uppercase; color:#64748b; font-weight:600; padding:.6rem .75rem; background:#f8fafc; }
+    td { padding:.5rem .75rem; border-top:1px solid #f1f5f9; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+    const API = '/api';
+
+    // ---------- Constantes UI ----------
+    const RISK_COLORS = { BAJO:'#16a34a', MEDIO:'#f59e0b', ALTO:'#dc2626' };
+    const STATUS_COLORS = { ABIERTA:'#dc2626', EN_PROCESO:'#f59e0b', CERRADA:'#16a34a' };
+    const DUE_COLORS = { AL_DIA:'#16a34a', POR_VENCER:'#f59e0b', VENCIDA:'#dc2626', CERRADA:'#64748b' };
+    const LEVELS = ['ACTO_INSEGURO','CONDICION_INSEGURA','CASI_INCIDENTE','PRIMEROS_AUXILIOS','TRATAMIENTO_MEDICO','ACTIVIDAD_RESTRINGIDA','LOST_TIME','FATALIDAD'];
+    const LEVEL_LABELS = {
+      ACTO_INSEGURO:'Actos inseguros', CONDICION_INSEGURA:'Condiciones inseguras', CASI_INCIDENTE:'Casi incidentes',
+      PRIMEROS_AUXILIOS:'Primeros auxilios', TRATAMIENTO_MEDICO:'Tratamiento médico', ACTIVIDAD_RESTRINGIDA:'Act. restringida',
+      LOST_TIME:'Lost time', FATALIDAD:'Fatalidad',
+    };
+    const LEVEL_COLORS = ['#16a34a','#65a30d','#ca8a04','#f59e0b','#ea580c','#dc2626','#b91c1c','#7f1d1d'];
+    const RISKS = ['BAJO','MEDIO','ALTO'];
+
+    // ---------- API helper ----------
+    function getToken(){ return localStorage.getItem('ehs_token'); }
+    async function api(path, { method='GET', body, form, query } = {}) {
+      let url = API + path;
+      if (query) { const p = new URLSearchParams(); Object.entries(query).forEach(([k,v])=>{ if(v!==undefined&&v!=='') p.set(k,v); }); const s=p.toString(); if(s) url += '?'+s; }
+      const headers = {}; const t = getToken(); if (t) headers.Authorization = 'Bearer '+t;
+      let payload; if (form) payload = form; else if (body) { headers['Content-Type']='application/json'; payload = JSON.stringify(body); }
+      const res = await fetch(url, { method, headers, body: payload });
+      const json = await res.json().catch(()=>({}));
+      if (!res.ok) throw new Error(json.message || ('Error '+res.status));
+      return json;
+    }
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+
+    // ---------- Charts (Chart.js wrappers) ----------
+    function Doughnut({ labels, data, colors, center }) {
+      const ref = useRef(null);
+      useEffect(() => {
+        const ch = new Chart(ref.current, { type:'doughnut',
+          data:{ labels, datasets:[{ data, backgroundColor:colors, borderWidth:0 }] },
+          options:{ responsive:true, maintainAspectRatio:false, cutout:'62%', plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, font:{size:11} } } } } });
+        return () => ch.destroy();
+      }, [JSON.stringify(labels), JSON.stringify(data)]);
+      const total = data.reduce((s,n)=>s+n,0);
+      return <div className="relative" style={{height:'220px'}}>
+        <canvas ref={ref}></canvas>
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{marginTop:'-26px'}}>
+          <div className="text-center"><div className="text-2xl font-bold">{total}</div><div className="text-[11px] text-slate-500">{center||'Total'}</div></div>
+        </div>
+      </div>;
+    }
+    function HBar({ labels, data, color }) {
+      const ref = useRef(null);
+      useEffect(() => {
+        const ch = new Chart(ref.current, { type:'bar',
+          data:{ labels, datasets:[{ data, backgroundColor:color||'#1d6fa5', borderRadius:4 }] },
+          options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ beginAtZero:true, ticks:{ precision:0 } } } } });
+        return () => ch.destroy();
+      }, [JSON.stringify(labels), JSON.stringify(data)]);
+      return <div style={{height: Math.max(180, labels.length*30)+'px'}}><canvas ref={ref}></canvas></div>;
+    }
+    function MultiLine({ rows }) {
+      const ref = useRef(null);
+      useEffect(() => {
+        const labels = rows.map(r=>r.month);
+        const datasets = LEVELS.map((l,i)=>({ label:LEVEL_LABELS[l], data:rows.map(r=>r[l]||0), borderColor:LEVEL_COLORS[i], backgroundColor:LEVEL_COLORS[i], tension:.3, pointRadius:0, borderWidth:2 }));
+        const ch = new Chart(ref.current, { type:'line', data:{ labels, datasets },
+          options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, font:{size:10} } } }, scales:{ y:{ beginAtZero:true, ticks:{ precision:0 } } } } });
+        return () => ch.destroy();
+      }, [JSON.stringify(rows)]);
+      return <div style={{height:'300px'}}><canvas ref={ref}></canvas></div>;
+    }
+
+    // ---------- Pirámide ----------
+    function Pyramid({ data }) {
+      const ordered = [...data].reverse(); // cúspide -> base
+      const n = ordered.length;
+      const total = data.reduce((s,d)=>s+d.count,0);
+      return <div className="flex flex-col items-center gap-1">
+        {ordered.map((row,i)=>{
+          const widthPct = 32 + ((n-i)/n)*68;
+          const color = LEVEL_COLORS[n-1-i];
+          return <div key={row.level} title={LEVEL_LABELS[row.level]+': '+row.count}
+            className="flex items-center justify-between px-3 text-white text-xs font-medium rounded-sm"
+            style={{ width:widthPct+'%', background:color, height:'36px', clipPath: i===0?'polygon(50% 0,100% 100%,0 100%)':'none' }}>
+            <span className="truncate">{i===0?'':LEVEL_LABELS[row.level]}</span>
+            <span className="font-bold">{row.count}</span>
+          </div>;
+        })}
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] w-full">
+          {data.map((d,i)=>(
+            <div key={d.level} className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-sm" style={{background:LEVEL_COLORS[i]}}></span>
+              <span className="text-slate-600">{LEVEL_LABELS[d.level]}</span>
+              <span className="ml-auto font-semibold">{d.count}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-1 text-xs text-slate-500">Total registros: <b>{total}</b></div>
+      </div>;
+    }
+
+    // ---------- Badges ----------
+    const Badge = ({ text, color }) => <span className="badge" style={{ background: color+'1a', color }}>{(text||'').replace('_',' ')}</span>;
+
+    // ---------- Login ----------
+    function Login({ onLogin }) {
+      const [email,setEmail]=useState('admin@ehs.local');
+      const [password,setPassword]=useState('Admin123*');
+      const [err,setErr]=useState(''); const [loading,setLoading]=useState(false);
+      async function submit(e){ e.preventDefault(); setErr(''); setLoading(true);
+        try { const r = await api('/auth/login',{method:'POST',body:{email,password}});
+          localStorage.setItem('ehs_token', r.token); localStorage.setItem('ehs_user', JSON.stringify(r.user)); onLogin(r.user);
+        } catch(e){ setErr(e.message); } finally { setLoading(false); } }
+      return <div className="min-h-screen flex items-center justify-center" style={{background:'linear-gradient(135deg,#0a2a42,#0f3d5e)'}}>
+        <form onSubmit={submit} className="card" style={{width:'380px'}}>
+          <div className="text-center mb-4">
+            <div className="mx-auto mb-2 h-12 w-12 rounded-xl bg-brand text-white grid place-items-center font-bold text-xl flex items-center justify-center">EHS</div>
+            <h1 className="text-xl font-semibold">EHS Platform</h1>
+            <p className="text-sm text-slate-500">Seguridad Industrial · Medio Ambiente · Salud</p>
+          </div>
+          {err && <div className="badge w-full justify-center py-2 mb-3" style={{background:'#fee2e2',color:'#b91c1c'}}>{err}</div>}
+          <label className="text-sm text-slate-600">Correo</label>
+          <input className="input mt-1 mb-3" type="email" value={email} onChange={e=>setEmail(e.target.value)} required/>
+          <label className="text-sm text-slate-600">Contraseña</label>
+          <input className="input mt-1 mb-4" type="password" value={password} onChange={e=>setPassword(e.target.value)} required/>
+          <button className="btn btn-primary w-full" disabled={loading}>{loading?'Ingresando…':'Ingresar'}</button>
+          <p className="text-xs text-center text-slate-400 mt-3">Demo: admin@ehs.local / Admin123*</p>
+        </form>
+      </div>;
+    }
+
+    // ---------- KPI ----------
+    const Kpi = ({ label, value, color }) => <div className="card">
+      <div className="text-[11px] uppercase tracking-wide text-slate-500 font-medium">{label}</div>
+      <div className="text-3xl font-bold" style={{color:color||'#0f3d5e'}}>{value}</div>
+    </div>;
+
+    // ---------- Dashboard ----------
+    function Dashboard() {
+      const [filters,setFilters]=useState({});
+      const [areas,setAreas]=useState([]);
+      const [d,setD]=useState(null); const [loading,setLoading]=useState(true);
+      useEffect(()=>{ api('/areas').then(r=>setAreas(r.items)).catch(()=>{}); },[]);
+      const load=useCallback(async()=>{ setLoading(true); try{ setD(await api('/dashboard',{query:filters})); } finally{ setLoading(false); } },[JSON.stringify(filters)]);
+      useEffect(()=>{ load(); },[load]);
+      const set=(k,v)=>setFilters(f=>({...f,[k]:v||undefined}));
+      const year=new Date().getFullYear();
+      const a=d&&d.actionsSummary;
+      const pct=(n=0,t=1)=>Math.round((n/Math.max(t,1))*100)+'%';
+      return <div className="space-y-5">
+        <div><h1 className="text-2xl font-bold">Dashboard EHS</h1><p className="text-sm text-slate-500">Centro de control · Seguridad industrial</p></div>
+        <div className="card flex flex-wrap items-end gap-3">
+          <Field label="Año"><select className="input" value={filters.year||''} onChange={e=>set('year',e.target.value)}><option value="">Todos</option>{[year,year-1,year-2].map(y=><option key={y}>{y}</option>)}</select></Field>
+          <Field label="Mes"><select className="input" value={filters.month||''} onChange={e=>set('month',e.target.value)}><option value="">Todos</option>{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'].map((m,i)=><option key={i} value={i+1}>{m}</option>)}</select></Field>
+          <Field label="Área"><select className="input" value={filters.area||''} onChange={e=>set('area',e.target.value)}><option value="">Todas</option>{areas.map(ar=><option key={ar.code} value={ar.code}>{ar.name}</option>)}</select></Field>
+          <Field label="Origen"><select className="input" value={filters.source||''} onChange={e=>set('source',e.target.value)}><option value="">Todos</option>{['STOP','COMMISSION','INCIDENT','IPERC','EXCEL'].map(s=><option key={s}>{s}</option>)}</select></Field>
+          <button className="btn btn-ghost" onClick={()=>setFilters({})}>Limpiar</button>
+        </div>
+        {loading||!d ? <div className="text-center text-slate-500 py-12">Cargando indicadores…</div> : <React.Fragment>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Kpi label="Registros pirámide" value={d.pyramid.reduce((s,p)=>s+p.count,0)} />
+            <Kpi label="Acciones abiertas" value={a.byStatus.ABIERTA} color={STATUS_COLORS.ABIERTA} />
+            <Kpi label="En proceso" value={a.byStatus.EN_PROCESO} color={STATUS_COLORS.EN_PROCESO} />
+            <Kpi label="Vencidas" value={a.byDue.VENCIDA} color="#dc2626" />
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="card lg:col-span-2"><div className="card-title">Pirámide de Heinrich</div><Pyramid data={d.pyramid}/></div>
+            <div className="space-y-4">
+              <div className="card"><div className="card-title">Acciones por estatus ({pct(a.byStatus.CERRADA,a.total)} cerradas)</div>
+                <Doughnut center="Acciones" labels={['Abiertas','En proceso','Cerradas']} data={[a.byStatus.ABIERTA,a.byStatus.EN_PROCESO,a.byStatus.CERRADA]} colors={[STATUS_COLORS.ABIERTA,STATUS_COLORS.EN_PROCESO,STATUS_COLORS.CERRADA]}/>
+              </div>
+              <div className="card"><div className="card-title">Acciones por riesgo</div>
+                <div className="flex justify-around text-center">{RISKS.map(r=><div key={r}><div className="text-2xl font-bold" style={{color:RISK_COLORS[r]}}>{a.byRisk[r]}</div><div className="text-[11px] text-slate-500">{r}</div></div>)}</div>
+              </div>
+            </div>
+          </div>
+          <div className="card"><div className="card-title">Comportamiento mensual de la pirámide</div><MultiLine rows={d.monthly}/></div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="card"><div className="card-title">Top áreas · Actos inseguros</div><HBar labels={d.topActs.map(r=>r.area)} data={d.topActs.map(r=>r.count)} color="#f59e0b"/></div>
+            <div className="card"><div className="card-title">Top áreas · Condiciones inseguras</div><HBar labels={d.topConditions.map(r=>r.area)} data={d.topConditions.map(r=>r.count)} color="#dc2626"/></div>
+            <div className="card"><div className="card-title">Top responsables · Acciones abiertas</div><HBar labels={d.topResponsibles.map(r=>r.responsible)} data={d.topResponsibles.map(r=>r.open)} color="#0f3d5e"/></div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="card"><div className="card-title">Registros por área</div><HBar labels={d.byArea.map(r=>r.area)} data={d.byArea.map(r=>r.count)}/></div>
+            <div className="card"><div className="card-title">Registros por máquina</div><HBar labels={d.byMachine.map(r=>r.machine)} data={d.byMachine.map(r=>r.count)}/></div>
+            <div className="card"><div className="card-title">Distribución por origen</div>
+              <Doughnut center="Registros" labels={d.bySource.map(s=>s.source)} data={d.bySource.map(s=>s.count)} colors={['#0f3d5e','#1d6fa5','#dc2626','#16a34a','#f59e0b']}/>
+            </div>
+          </div>
+        </React.Fragment>}
+      </div>;
+    }
+    const Field = ({label,children}) => <label className="flex flex-col gap-1" style={{minWidth:'120px'}}><span className="text-xs text-slate-500">{label}</span>{children}</label>;
+
+    // ---------- Configuración de módulos CRUD ----------
+    const MODULES = {
+      stop: { title:'Observaciones STOP', subtitle:'Comportamiento seguro · alimenta pirámide y acciones', path:'stop', dateField:'date',
+        columns:[['folio','Folio'],['date','Fecha','date'],['observer','Observador'],['area','Área'],['level','Nivel'],['risk','Riesgo','risk'],['responsible','Responsable']],
+        fields:[
+          ['folio','Folio','text',true],['date','Fecha','date',true],['observer','Observador','text',true],['area','Área (código)','text',true],
+          ['machine','Máquina','text'],['level','Nivel','level'],['risk','Riesgo','risk'],['responsible','Responsable','text'],
+          ['dueDate','Fecha compromiso','date'],['description','Descripción','textarea',true],['requiredAction','Acción requerida','textarea'],
+        ] },
+      commission: { title:'Comisión de Seguridad e Higiene', subtitle:'Hallazgos de inspección', path:'commission', dateField:'date',
+        columns:[['folio','Folio'],['date','Fecha','date'],['auditor','Auditor'],['area','Área'],['level','Nivel'],['risk','Riesgo','risk'],['responsible','Responsable']],
+        fields:[
+          ['folio','Folio','text',true],['date','Fecha','date',true],['auditor','Auditor','text',true],['area','Área (código)','text',true],
+          ['machine','Máquina','text'],['level','Nivel','level'],['risk','Riesgo','risk'],['responsible','Responsable','text'],
+          ['dueDate','Fecha compromiso','date'],['description','Descripción','textarea',true],['correctiveAction','Acción correctiva','textarea'],
+        ] },
+      incidents: { title:'Incidentes / Accidentes', subtitle:'Eventos · alimentan la pirámide con severidad', path:'incidents', dateField:'eventDate',
+        columns:[['folio','Folio'],['eventDate','Fecha','date'],['area','Área'],['level','Nivel'],['severity','Sev.'],['lostDays','Días perd.'],['responsible','Responsable']],
+        fields:[
+          ['folio','Folio','text',true],['eventDate','Fecha del evento','date',true],['area','Área (código)','text',true],['machine','Máquina','text'],
+          ['person','Persona involucrada','text'],['level','Nivel','level'],['severity','Severidad (1-5)','number'],['lostDays','Días perdidos','number'],
+          ['risk','Riesgo','risk'],['responsible','Responsable','text'],['dueDate','Fecha compromiso','date'],
+          ['description','Descripción','textarea',true],['rootCause','Causa raíz','textarea'],['correctiveAction','Acción correctiva','textarea'],
+        ] },
+      iperc: { title:'Acciones IPERC', subtitle:'Acciones derivadas de matriz IPERC', path:'iperc', dateField:'date',
+        columns:[['folio','Folio'],['date','Fecha','date'],['area','Área'],['riskLevel','Nivel riesgo','risk'],['responsible','Responsable'],['status','Estatus','status']],
+        fields:[
+          ['folio','Folio','text',true],['date','Fecha','date'],['area','Área (código)','text',true],['process','Proceso','text'],
+          ['machine','Máquina','text'],['risk','Riesgo (descripción)','text',true],['riskLevel','Nivel de riesgo','risk'],['responsible','Responsable','text',true],
+          ['dueDate','Fecha compromiso','date'],['status','Estatus','status'],['description','Descripción','textarea',true],['requiredAction','Acción requerida','textarea',true],
+        ] },
+    };
+
+    function CrudModule({ cfg }) {
+      const [items,setItems]=useState([]); const [loading,setLoading]=useState(true);
+      const [open,setOpen]=useState(false); const [form,setForm]=useState({}); const [err,setErr]=useState('');
+      const [q,setQ]=useState('');
+      const load=useCallback(async()=>{ setLoading(true); try{ const r=await api('/'+cfg.path,{query:{limit:300}}); setItems(r.items);} finally{ setLoading(false);} },[cfg.path]);
+      useEffect(()=>{ load(); },[load]);
+      function newForm(){ const f={}; f[cfg.dateField]=new Date().toISOString().slice(0,10); setForm(f); setErr(''); setOpen(true); }
+      function edit(it){ const f={...it}; cfg.fields.forEach(([n,,t])=>{ if(t==='date'&&f[n]) f[n]=String(f[n]).slice(0,10); }); setForm(f); setErr(''); setOpen(true); }
+      async function save(e){ e.preventDefault(); setErr('');
+        try{ if(form._id) await api('/'+cfg.path+'/'+form._id,{method:'PUT',body:form}); else await api('/'+cfg.path,{method:'POST',body:form});
+          setOpen(false); load(); } catch(e){ setErr(e.message); } }
+      async function del(id){ if(!confirm('¿Eliminar registro?')) return; await api('/'+cfg.path+'/'+id,{method:'DELETE'}); load(); }
+      const filtered = items.filter(it=>!q || (it.folio||'').toLowerCase().includes(q.toLowerCase()));
+      const cell=(it,name,type)=>{ const v=it[name]; if(type==='date') return fmtDate(v); if(type==='risk') return <Badge text={v} color={RISK_COLORS[v]}/>; if(type==='status') return <Badge text={v} color={STATUS_COLORS[v]}/>; if(name==='level') return (v||'').replace('_',' '); return v===undefined||v===null||v===''?'—':String(v); };
+      return <div className="space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div><h1 className="text-2xl font-bold">{cfg.title}</h1><p className="text-sm text-slate-500">{cfg.subtitle}</p></div>
+          <div className="flex gap-2">
+            <input className="input" placeholder="Buscar folio…" value={q} onChange={e=>setQ(e.target.value)} style={{width:'180px'}}/>
+            <button className="btn btn-primary" onClick={newForm}>+ Nuevo</button>
+          </div>
+        </div>
+        <div className="card p-0 overflow-x-auto">
+          <table><thead><tr>{cfg.columns.map(c=><th key={c[0]}>{c[1]}</th>)}<th></th></tr></thead>
+            <tbody>
+              {loading ? <tr><td colSpan={cfg.columns.length+1} className="text-center text-slate-500 py-8">Cargando…</td></tr>
+              : filtered.length===0 ? <tr><td colSpan={cfg.columns.length+1} className="text-center text-slate-500 py-8">Sin registros</td></tr>
+              : filtered.map(it=><tr key={it._id} className="hover:bg-slate-50">
+                  {cfg.columns.map(c=><td key={c[0]}>{cell(it,c[0],c[2])}</td>)}
+                  <td className="text-right whitespace-nowrap">
+                    <button className="text-brand-light hover:underline text-xs mr-3" onClick={()=>edit(it)}>Editar</button>
+                    <button className="text-red-500 hover:underline text-xs" onClick={()=>del(it._id)}>Eliminar</button>
+                  </td>
+                </tr>)}
+            </tbody>
+          </table>
+        </div>
+        {open && <Modal onClose={()=>setOpen(false)}>
+          <form onSubmit={save} className="space-y-3">
+            <h2 className="text-lg font-semibold">{form._id?'Editar':'Nuevo'} — {cfg.title}</h2>
+            {err && <div className="badge w-full justify-center py-2" style={{background:'#fee2e2',color:'#b91c1c'}}>{err}</div>}
+            <div className="grid grid-cols-2 gap-3">
+              {cfg.fields.filter(f=>f[2]!=='textarea').map(([name,label,type,req])=>
+                <label key={name} className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500">{label}{req?' *':''}</span>
+                  {type==='risk' ? <select className="input" value={form[name]||'MEDIO'} onChange={e=>setForm({...form,[name]:e.target.value})}>{RISKS.map(r=><option key={r}>{r}</option>)}</select>
+                  : type==='status' ? <select className="input" value={form[name]||'ABIERTA'} onChange={e=>setForm({...form,[name]:e.target.value})}>{['ABIERTA','EN_PROCESO','CERRADA'].map(s=><option key={s}>{s}</option>)}</select>
+                  : type==='level' ? <select className="input" value={form[name]||LEVELS[0]} onChange={e=>setForm({...form,[name]:e.target.value})}>{LEVELS.map(l=><option key={l} value={l}>{LEVEL_LABELS[l]}</option>)}</select>
+                  : <input className="input" type={type==='number'?'number':type==='date'?'date':'text'} value={form[name]||''} required={req} onChange={e=>setForm({...form,[name]:e.target.value})}/>}
+                </label>)}
+            </div>
+            {cfg.fields.filter(f=>f[2]==='textarea').map(([name,label,,req])=>
+              <label key={name} className="flex flex-col gap-1"><span className="text-xs text-slate-500">{label}{req?' *':''}</span>
+                <textarea className="input" style={{minHeight:'56px'}} value={form[name]||''} required={req} onChange={e=>setForm({...form,[name]:e.target.value})}/></label>)}
+            <div className="flex justify-end gap-2 pt-1"><button type="button" className="btn btn-ghost" onClick={()=>setOpen(false)}>Cancelar</button><button className="btn btn-primary">Guardar</button></div>
+          </form>
+        </Modal>}
+      </div>;
+    }
+
+    function Modal({ children, onClose }) {
+      return <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(0,0,0,.45)'}} onClick={onClose}>
+        <div className="card w-full" style={{maxWidth:'640px',maxHeight:'90vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>{children}</div>
+      </div>;
+    }
+
+    // ---------- Acciones (motor) ----------
+    function Actions() {
+      const [items,setItems]=useState([]); const [sum,setSum]=useState(null); const [f,setF]=useState({});
+      const load=useCallback(async()=>{ const [l,s]=await Promise.all([api('/actions',{query:f}),api('/actions/summary')]); setItems(l.items); setSum(s); },[JSON.stringify(f)]);
+      useEffect(()=>{ load(); },[load]);
+      async function chg(id,status){ await api('/actions/'+id+'/status',{method:'PATCH',body:{status}}); load(); }
+      const set=(k,v)=>setF(p=>({...p,[k]:v||undefined}));
+      return <div className="space-y-4">
+        <div><h1 className="text-2xl font-bold">Motor de Acciones</h1><p className="text-sm text-slate-500">Repositorio único · STOP, Comisión, Incidentes e IPERC</p></div>
+        {sum && <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Kpi label="Total" value={sum.total}/><Kpi label="Abiertas" value={sum.byStatus.ABIERTA} color="#dc2626"/>
+          <Kpi label="En proceso" value={sum.byStatus.EN_PROCESO} color="#f59e0b"/><Kpi label="Vencidas" value={sum.byDue.VENCIDA} color="#b91c1c"/>
+        </div>}
+        <div className="card flex flex-wrap gap-3 items-end">
+          <Field label="Estatus"><select className="input" value={f.status||''} onChange={e=>set('status',e.target.value)}><option value="">Todos</option>{['ABIERTA','EN_PROCESO','CERRADA'].map(s=><option key={s}>{s}</option>)}</select></Field>
+          <Field label="Vencimiento"><select className="input" value={f.due||''} onChange={e=>set('due',e.target.value)}><option value="">Todos</option>{['AL_DIA','POR_VENCER','VENCIDA'].map(s=><option key={s}>{s}</option>)}</select></Field>
+          <Field label="Origen"><select className="input" value={f.source||''} onChange={e=>set('source',e.target.value)}><option value="">Todos</option>{['STOP','COMMISSION','INCIDENT','IPERC','EXCEL'].map(s=><option key={s}>{s}</option>)}</select></Field>
+          <button className="btn btn-ghost" onClick={()=>setF({})}>Limpiar</button>
+        </div>
+        <div className="card p-0 overflow-x-auto">
+          <table><thead><tr>{['Folio','Origen','Área','Acción','Riesgo','Responsable','Compromiso','Venc.','Estatus',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
+            <tbody>
+              {items.map(a=><tr key={a._id} className="hover:bg-slate-50">
+                <td className="font-medium">{a.folio}</td><td className="text-xs">{a.source}</td><td>{a.area||'—'}</td>
+                <td className="truncate" style={{maxWidth:'240px'}} title={a.requiredAction}>{a.requiredAction}</td>
+                <td><Badge text={a.risk} color={RISK_COLORS[a.risk]}/></td><td>{a.responsible}</td><td>{fmtDate(a.dueDate)}</td>
+                <td><Badge text={a.dueState} color={DUE_COLORS[a.dueState]}/></td><td><Badge text={a.status} color={STATUS_COLORS[a.status]}/></td>
+                <td><select className="text-xs border border-slate-200 rounded px-1 py-1" value={a.status} onChange={e=>chg(a._id,e.target.value)}>{['ABIERTA','EN_PROCESO','CERRADA'].map(s=><option key={s}>{s}</option>)}</select></td>
+              </tr>)}
+              {items.length===0 && <tr><td colSpan={10} className="text-center text-slate-500 py-8">Sin acciones</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>;
+    }
+
+    // ---------- Importación Excel ----------
+    const IMPORT_FIELDS = {
+      HEINRICH:['folio','date','level','severity','area','machine','description'],
+      STOP:['folio','date','observer','area','machine','description','level','risk','requiredAction','responsible','dueDate'],
+      COMMISSION:['folio','date','auditor','area','machine','description','level','risk','correctiveAction','responsible','dueDate'],
+      INCIDENT:['folio','eventDate','area','machine','person','description','level','severity','lostDays','rootCause','correctiveAction','responsible','dueDate'],
+      IPERC:['folio','date','area','process','machine','risk','riskLevel','description','requiredAction','responsible','dueDate','status'],
+    };
+    function ImportView() {
+      const [target,setTarget]=useState('HEINRICH'); const [file,setFile]=useState(null);
+      const [columns,setColumns]=useState([]); const [preview,setPreview]=useState([]); const [mapping,setMapping]=useState({});
+      const [result,setResult]=useState(null); const [err,setErr]=useState(''); const [busy,setBusy]=useState(false);
+      async function doPreview(){ if(!file) return; setErr(''); setBusy(true); setResult(null);
+        try{ const fd=new FormData(); fd.append('file',file); const r=await api('/import/preview',{method:'POST',form:fd});
+          setColumns(r.columns); setPreview(r.preview); const auto={}; r.columns.forEach(c=>{ const m=IMPORT_FIELDS[target].find(f=>f.toLowerCase()===c.toLowerCase().trim()); if(m) auto[c]=m; }); setMapping(auto);
+        }catch(e){ setErr(e.message);} finally{ setBusy(false);} }
+      async function doImport(){ if(!file) return; setErr(''); setBusy(true);
+        try{ const fd=new FormData(); fd.append('file',file); fd.append('target',target); fd.append('mapping',JSON.stringify(mapping));
+          const r=await api('/import/commit',{method:'POST',form:fd}); setResult(r.result);
+        }catch(e){ setErr(e.message);} finally{ setBusy(false);} }
+      return <div className="space-y-4">
+        <h1 className="text-2xl font-bold">Importación de Excel</h1>
+        <div className="card space-y-3">
+          <div className="flex flex-wrap gap-3 items-end">
+            <Field label="Destino"><select className="input" value={target} onChange={e=>{setTarget(e.target.value);setColumns([]);setResult(null);}}>
+              <option value="HEINRICH">Pirámide Heinrich (histórico)</option><option value="STOP">Observaciones STOP</option>
+              <option value="COMMISSION">Comisión Seg. e Higiene</option><option value="INCIDENT">Incidentes / Accidentes</option><option value="IPERC">Acciones IPERC</option>
+            </select></Field>
+            <Field label="Archivo (.xlsx/.xls)"><input type="file" accept=".xlsx,.xls" onChange={e=>setFile(e.target.files[0])} className="text-sm"/></Field>
+            <button className="btn btn-primary" disabled={!file||busy} onClick={doPreview}>{busy?'Procesando…':'1. Vista previa'}</button>
+          </div>
+          {err && <div className="badge py-2 px-3" style={{background:'#fee2e2',color:'#b91c1c'}}>{err}</div>}
+        </div>
+        {columns.length>0 && <div className="card space-y-3">
+          <div className="card-title">2. Mapeo de columnas</div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {columns.map(c=><label key={c} className="flex flex-col gap-1"><span className="text-xs font-medium truncate">{c}</span>
+              <select className="input" value={mapping[c]||''} onChange={e=>setMapping({...mapping,[c]:e.target.value})}>
+                <option value="">— ignorar —</option>{IMPORT_FIELDS[target].map(f=><option key={f}>{f}</option>)}</select></label>)}
+          </div>
+          <div className="overflow-x-auto"><div className="card-title mt-2">Vista previa</div>
+            <table><thead><tr>{columns.map(c=><th key={c}>{c}</th>)}</tr></thead>
+              <tbody>{preview.map((row,i)=><tr key={i}>{columns.map(c=><td key={c}>{String(row[c]??'')}</td>)}</tr>)}</tbody></table>
+          </div>
+          <button className="btn btn-primary" disabled={busy} onClick={doImport}>3. Importar</button>
+        </div>}
+        {result && <div className="card space-y-2">
+          <div className="card-title">Resultado</div>
+          <div className="flex gap-6">
+            <div><div className="text-2xl font-bold">{result.total}</div><div className="text-xs text-slate-500">Total</div></div>
+            <div><div className="text-2xl font-bold text-green-600">{result.inserted}</div><div className="text-xs text-slate-500">Importados</div></div>
+            <div><div className="text-2xl font-bold text-red-600">{result.rejected.length}</div><div className="text-xs text-slate-500">Rechazados</div></div>
+          </div>
+          {result.rejected.length>0 && <table><thead><tr><th>Fila</th><th>Folio</th><th>Motivo</th></tr></thead>
+            <tbody>{result.rejected.map((r,i)=><tr key={i}><td>{r.row}</td><td>{r.folio||'—'}</td><td className="text-red-600">{r.reason}</td></tr>)}</tbody></table>}
+        </div>}
+      </div>;
+    }
+
+    // ---------- Shell con pestañas ----------
+    const TABS = [
+      ['dashboard','Dashboard','📊'], ['stop','Obs. STOP','👁️'], ['commission','Comisión','📋'],
+      ['incidents','Incidentes','⚠️'], ['iperc','IPERC','🛡️'], ['actions','Acciones','✅'], ['import','Importar','📥'],
+    ];
+    function App() {
+      const [user,setUser]=useState(()=>{ const s=localStorage.getItem('ehs_user'); return s&&getToken()?JSON.parse(s):null; });
+      const [tab,setTab]=useState('dashboard');
+      function logout(){ localStorage.removeItem('ehs_token'); localStorage.removeItem('ehs_user'); setUser(null); }
+      if(!user) return <Login onLogin={setUser}/>;
+      return <div className="min-h-screen">
+        <header className="bg-brand-dark text-white sticky top-0 z-40">
+          <div className="px-5 py-3 flex items-center gap-4">
+            <div className="flex items-center gap-2"><div className="h-8 w-8 rounded-lg bg-white/15 grid place-items-center font-bold flex items-center justify-center">EHS</div><span className="font-semibold">EHS Platform</span></div>
+            <nav className="flex gap-1 overflow-x-auto flex-1">
+              {TABS.map(([k,l,ic])=><button key={k} onClick={()=>setTab(k)}
+                className={'px-3 py-1.5 rounded-lg text-sm whitespace-nowrap '+(tab===k?'bg-white/20 font-medium':'text-white/75 hover:bg-white/10')}>
+                <span className="mr-1">{ic}</span>{l}</button>)}
+            </nav>
+            <div className="flex items-center gap-3 text-sm">
+              <div className="text-right hidden sm:block"><div className="font-medium leading-tight">{user.name}</div><div className="text-[11px] text-white/60">{user.role}</div></div>
+              <button className="btn btn-ghost text-xs" style={{background:'rgba(255,255,255,.12)',color:'#fff'}} onClick={logout}>Salir</button>
+            </div>
+          </div>
+        </header>
+        <main className="p-5 max-w-[1600px] mx-auto">
+          {tab==='dashboard' && <Dashboard/>}
+          {tab==='stop' && <CrudModule cfg={MODULES.stop}/>}
+          {tab==='commission' && <CrudModule cfg={MODULES.commission}/>}
+          {tab==='incidents' && <CrudModule cfg={MODULES.incidents}/>}
+          {tab==='iperc' && <CrudModule cfg={MODULES.iperc}/>}
+          {tab==='actions' && <Actions/>}
+          {tab==='import' && <ImportView/>}
+        </main>
+      </div>;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  </script>
+</body>
+</html>
