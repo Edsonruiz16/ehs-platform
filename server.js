@@ -19,6 +19,53 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
 
 // ---------------------------------------------------------------------------
+// Seguridad: Rate limiting y control de intentos fallidos
+// ---------------------------------------------------------------------------
+const loginAttempts = new Map();
+const registrationIPs = new Map();
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_ATTEMPT_WINDOW = 15 * 60 * 1000; // 15 minutos
+const MAX_REGISTRATIONS_PER_IP = 3;
+const REGISTRATION_WINDOW = 24 * 60 * 60 * 1000; // 24 horas
+
+function recordLoginAttempt(email) {
+  const key = email.toLowerCase();
+  const now = Date.now();
+  if (!loginAttempts.has(key)) loginAttempts.set(key, []);
+  const attempts = loginAttempts.get(key).filter(t => now - t < LOGIN_ATTEMPT_WINDOW);
+  attempts.push(now);
+  loginAttempts.set(key, attempts);
+  return attempts.length;
+}
+
+function isAccountLocked(email) {
+  const key = email.toLowerCase();
+  const attempts = loginAttempts.get(key) || [];
+  return attempts.length >= MAX_LOGIN_ATTEMPTS;
+}
+
+function recordRegistration(ip) {
+  const now = Date.now();
+  if (!registrationIPs.has(ip)) registrationIPs.set(ip, []);
+  const regs = registrationIPs.get(ip).filter(t => now - t < REGISTRATION_WINDOW);
+  regs.push(now);
+  registrationIPs.set(ip, regs);
+  return regs.length;
+}
+
+function validatePassword(password) {
+  if (password.length < 8) return 'Mínimo 8 caracteres';
+  if (!/[a-z]/.test(password)) return 'Debe incluir minúsculas';
+  if (!/[A-Z]/.test(password)) return 'Debe incluir mayúsculas';
+  if (!/[0-9]/.test(password)) return 'Debe incluir números';
+  return null;
+}
+
+function validateEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+// ---------------------------------------------------------------------------
 // Constantes de dominio
 // ---------------------------------------------------------------------------
 const LEVELS = [
@@ -42,6 +89,8 @@ const userSchema = new Schema({
   role: { type: String, enum: ROLES, default: 'CAPTURISTA' },
   area: String,
   active: { type: Boolean, default: true },
+  failedLoginAttempts: { type: Number, default: 0, select: false },
+  lockedUntil: { type: Date, select: false },
 }, { timestamps: true });
 userSchema.methods.comparePassword = function (c) { return bcrypt.compare(c, this.password); };
 const User = model('User', userSchema);
@@ -216,8 +265,16 @@ function dueState(a) {
 // App + auth
 // ---------------------------------------------------------------------------
 const app = express();
-app.use(cors());
+app.use(cors({ origin: process.env.NODE_ENV === 'production' ? process.env.ALLOWED_ORIGIN || '*' : '*' }));
 app.use(express.json({ limit: '5mb' }));
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('Content-Security-Policy', "default-src 'self' https: cdn.jsdelivr.net cdn.tailwindcss.com unpkg.com");
+  next();
+});
 
 function sign(user) {
   return jwt.sign({ id: String(user._id), name: user.name, email: user.email, role: user.role, area: user.area }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
@@ -262,15 +319,44 @@ const api = express.Router();
 // --- Auth ---
 api.post('/auth/login', wrap(async (req, res) => {
   const { email, password } = req.body;
-  const user = await User.findOne({ email: (email || '').toLowerCase(), active: true }).select('+password');
-  if (!user || !(await user.comparePassword(password))) return res.status(401).json({ message: 'Credenciales inválidas' });
+  if (!email || !password) return res.status(400).json({ message: 'Email y contraseña requeridos' });
+  if (!validateEmail(email)) return res.status(400).json({ message: 'Email inválido' });
+
+  const now = new Date();
+  const user = await User.findOne({ email: (email || '').toLowerCase(), active: true }).select('+password +failedLoginAttempts +lockedUntil');
+
+  if (!user) { recordLoginAttempt(email); return res.status(401).json({ message: 'Credenciales inválidas' }); }
+  if (user.lockedUntil && user.lockedUntil > now) return res.status(429).json({ message: 'Cuenta bloqueada por seguridad. Intenta más tarde.' });
+  if (!(await user.comparePassword(password))) {
+    recordLoginAttempt(email);
+    const attempts = recordLoginAttempt(email);
+    if (attempts >= MAX_LOGIN_ATTEMPTS) {
+      await User.updateOne({ _id: user._id }, { lockedUntil: new Date(now.getTime() + 30 * 60 * 1000) });
+      return res.status(429).json({ message: 'Cuenta bloqueada por seguridad (demasiados intentos fallidos).' });
+    }
+    return res.status(401).json({ message: 'Credenciales inválidas' });
+  }
+
+  await User.updateOne({ _id: user._id }, { failedLoginAttempts: 0, lockedUntil: null });
   res.json({ token: sign(user), user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 }));
 api.post('/auth/register', wrap(async (req, res) => {
   const { name, email, password } = req.body;
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+
   if (!name || !email || !password) return res.status(400).json({ message: 'Nombre, email y contraseña requeridos' });
+  if (!validateEmail(email)) return res.status(400).json({ message: 'Email inválido' });
+  if (name.length < 2 || name.length > 100) return res.status(400).json({ message: 'Nombre debe tener 2-100 caracteres' });
+
+  const passErr = validatePassword(password);
+  if (passErr) return res.status(400).json({ message: 'Contraseña débil: ' + passErr });
+
+  const regCount = recordRegistration(ip);
+  if (regCount > MAX_REGISTRATIONS_PER_IP) return res.status(429).json({ message: 'Demasiados registros desde esta IP. Intenta más tarde.' });
+
   const existing = await User.findOne({ email: (email || '').toLowerCase() });
   if (existing) return res.status(409).json({ message: 'Email ya registrado' });
+
   const hash = (p) => bcrypt.hashSync(p, 10);
   const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), role: 'CAPTURISTA' });
   res.status(201).json({ token: sign(user), user: { id: user._id, name: user.name, email: user.email, role: user.role } });
@@ -286,6 +372,13 @@ api.get('/users', protect, isAdmin, wrap(async (_req, res) => {
 api.post('/users', protect, isAdmin, wrap(async (req, res) => {
   const { name, email, password, role, area } = req.body;
   if (!name || !email || !password) return res.status(400).json({ message: 'Nombre, email y contraseña requeridos' });
+  if (!validateEmail(email)) return res.status(400).json({ message: 'Email inválido' });
+  if (name.length < 2 || name.length > 100) return res.status(400).json({ message: 'Nombre debe tener 2-100 caracteres' });
+  if (!['ADMIN', 'CAPTURISTA', 'CONSULTA'].includes(role || 'CAPTURISTA')) return res.status(400).json({ message: 'Rol inválido' });
+
+  const passErr = validatePassword(password);
+  if (passErr) return res.status(400).json({ message: 'Contraseña débil: ' + passErr });
+
   const existing = await User.findOne({ email: (email || '').toLowerCase() });
   if (existing) return res.status(409).json({ message: 'Email ya registrado' });
   const hash = (p) => bcrypt.hashSync(p, 10);
