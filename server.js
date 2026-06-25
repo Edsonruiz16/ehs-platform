@@ -232,6 +232,10 @@ function canWrite(req, res, next) {
   if (req.user && req.user.role !== 'CONSULTA') return next();
   return res.status(403).json({ message: 'Sin permisos de escritura' });
 }
+function isAdmin(req, res, next) {
+  if (req.user && req.user.role === 'ADMIN') return next();
+  return res.status(403).json({ message: 'Solo administradores' });
+}
 const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
   const code = e.code === 11000 ? 409 : 400;
   res.status(code).json({ message: e.code === 11000 ? 'Folio duplicado' : e.message });
@@ -262,8 +266,57 @@ api.post('/auth/login', wrap(async (req, res) => {
   if (!user || !(await user.comparePassword(password))) return res.status(401).json({ message: 'Credenciales inválidas' });
   res.json({ token: sign(user), user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 }));
+api.post('/auth/register', wrap(async (req, res) => {
+  const { name, email, password } = req.body;
+  if (!name || !email || !password) return res.status(400).json({ message: 'Nombre, email y contraseña requeridos' });
+  const existing = await User.findOne({ email: (email || '').toLowerCase() });
+  if (existing) return res.status(409).json({ message: 'Email ya registrado' });
+  const hash = (p) => bcrypt.hashSync(p, 10);
+  const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), role: 'CAPTURISTA' });
+  res.status(201).json({ token: sign(user), user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+}));
 api.get('/me', protect, (req, res) => res.json({ user: req.user }));
 api.get('/areas', protect, wrap(async (_req, res) => res.json({ items: await Area.find().sort({ name: 1 }) })));
+
+// --- Admin: Gestión de Usuarios ---
+api.get('/users', protect, isAdmin, wrap(async (_req, res) => {
+  const users = await User.find().select('+password').sort({ createdAt: -1 });
+  res.json({ items: users.map(u => ({ id: u._id, name: u.name, email: u.email, role: u.role, password: u.password, area: u.area, active: u.active })) });
+}));
+api.post('/users', protect, isAdmin, wrap(async (req, res) => {
+  const { name, email, password, role, area } = req.body;
+  if (!name || !email || !password) return res.status(400).json({ message: 'Nombre, email y contraseña requeridos' });
+  const existing = await User.findOne({ email: (email || '').toLowerCase() });
+  if (existing) return res.status(409).json({ message: 'Email ya registrado' });
+  const hash = (p) => bcrypt.hashSync(p, 10);
+  const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), role: role || 'CAPTURISTA', area });
+  res.status(201).json({ item: { id: user._id, name: user.name, email: user.email, role: user.role, password: user.password, area: user.area, active: user.active } });
+}));
+api.patch('/users/:id', protect, isAdmin, wrap(async (req, res) => {
+  const { name, email, role, area, active } = req.body;
+  const update = {};
+  if (name) update.name = name;
+  if (email) update.email = email.toLowerCase();
+  if (role) update.role = role;
+  if (area) update.area = area;
+  if (active !== undefined) update.active = active;
+  const user = await User.findByIdAndUpdate(req.params.id, update, { new: true }).select('+password');
+  if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
+  res.json({ item: { id: user._id, name: user.name, email: user.email, role: user.role, password: user.password, area: user.area, active: user.active } });
+}));
+api.patch('/users/:id/password', protect, isAdmin, wrap(async (req, res) => {
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ message: 'Contraseña requerida' });
+  const hash = (p) => bcrypt.hashSync(p, 10);
+  const user = await User.findByIdAndUpdate(req.params.id, { password: hash(password) }, { new: true }).select('+password');
+  if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
+  res.json({ item: { id: user._id, name: user.name, email: user.email, role: user.role, password: user.password, area: user.area, active: user.active } });
+}));
+api.delete('/users/:id', protect, isAdmin, wrap(async (req, res) => {
+  const user = await User.findByIdAndDelete(req.params.id);
+  if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
+  res.json({ ok: true });
+}));
 
 // --- Recurso genérico (CRUD + consolidación) ---
 function resource(pathName, Model, opts = {}) {
