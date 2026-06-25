@@ -138,14 +138,18 @@
 
     // ---------- Login ----------
     function Login({ onLogin }) {
-      const [email,setEmail]=useState('admin@ehs.local');
-      const [password,setPassword]=useState('Admin123*');
+      const [email,setEmail]=useState('');
+      const [password,setPassword]=useState('');
       const [err,setErr]=useState(''); const [loading,setLoading]=useState(false);
+      const [showRegister,setShowRegister]=useState(false);
+
       async function submit(e){ e.preventDefault(); setErr(''); setLoading(true);
         try { const r = await api('/auth/login',{method:'POST',body:{email,password}});
           localStorage.setItem('ehs_token', r.token); localStorage.setItem('ehs_user', JSON.stringify(r.user)); onLogin(r.user);
         } catch(e){ setErr(e.message); } finally { setLoading(false); } }
+
       return <div className="min-h-screen flex items-center justify-center" style={{background:'linear-gradient(135deg,#0a2a42,#0f3d5e)'}}>
+        {!showRegister ? (
         <form onSubmit={submit} className="card" style={{width:'380px'}}>
           <div className="text-center mb-4">
             <div className="mx-auto mb-2 h-12 w-12 rounded-xl bg-brand text-white grid place-items-center font-bold text-xl flex items-center justify-center">EHS</div>
@@ -158,8 +162,33 @@
           <label className="text-sm text-slate-600">Contraseña</label>
           <input className="input mt-1 mb-4" type="password" value={password} onChange={e=>setPassword(e.target.value)} required/>
           <button className="btn btn-primary w-full" disabled={loading}>{loading?'Ingresando…':'Ingresar'}</button>
-          <p className="text-xs text-center text-slate-400 mt-3">Demo: admin@ehs.local / Admin123*</p>
+          <div className="text-center mt-4">
+            <p className="text-sm text-slate-600">¿No tienes cuenta?</p>
+            <button type="button" className="btn btn-ghost text-sm mt-2 w-full" onClick={() => setShowRegister(true)}>Registrarse</button>
+          </div>
         </form>
+        ) : (
+        <form onSubmit={async(e) => { e.preventDefault(); setErr(''); setLoading(true);
+          try { const r = await api('/auth/register',{method:'POST',body:{name:email.split('@')[0],email,password}});
+            localStorage.setItem('ehs_token', r.token); localStorage.setItem('ehs_user', JSON.stringify(r.user)); onLogin(r.user);
+          } catch(e){ setErr(e.message); } finally { setLoading(false); }
+        }} className="card" style={{width:'380px'}}>
+          <div className="text-center mb-4">
+            <div className="mx-auto mb-2 h-12 w-12 rounded-xl bg-brand text-white grid place-items-center font-bold text-xl flex items-center justify-center">EHS</div>
+            <h1 className="text-xl font-semibold">Crear cuenta</h1>
+            <p className="text-sm text-slate-500">Registro como Capturista</p>
+          </div>
+          {err && <div className="badge w-full justify-center py-2 mb-3" style={{background:'#fee2e2',color:'#b91c1c'}}>{err}</div>}
+          <label className="text-sm text-slate-600">Correo</label>
+          <input className="input mt-1 mb-3" type="email" value={email} onChange={e=>setEmail(e.target.value)} required/>
+          <label className="text-sm text-slate-600">Contraseña</label>
+          <input className="input mt-1 mb-4" type="password" value={password} onChange={e=>setPassword(e.target.value)} required/>
+          <button className="btn btn-primary w-full" disabled={loading}>{loading?'Registrando…':'Registrarse'}</button>
+          <div className="text-center mt-4">
+            <button type="button" className="btn btn-ghost text-sm w-full" onClick={() => {setShowRegister(false); setErr('');}}>Volver a login</button>
+          </div>
+        </form>
+        )}
       </div>;
     }
 
