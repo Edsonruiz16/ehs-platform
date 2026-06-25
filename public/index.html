@@ -104,32 +104,68 @@
       return <div style={{height:'300px'}}><canvas ref={ref}></canvas></div>;
     }
 
-    // ---------- Pirámide ----------
+    // ---------- Pirámide Heinrich ----------
     function Pyramid({ data }) {
-      const ordered = [...data].reverse(); // cúspide -> base
-      const n = ordered.length;
       const total = data.reduce((s,d)=>s+d.count,0);
-      return <div className="flex flex-col items-center gap-1">
-        {ordered.map((row,i)=>{
-          const widthPct = 32 + ((n-i)/n)*68;
-          const color = LEVEL_COLORS[n-1-i];
-          return <div key={row.level} title={LEVEL_LABELS[row.level]+': '+row.count}
-            className="flex items-center justify-between px-3 text-white text-xs font-medium rounded-sm"
-            style={{ width:widthPct+'%', background:color, height:'36px', clipPath: i===0?'polygon(50% 0,100% 100%,0 100%)':'none' }}>
-            <span className="truncate">{i===0?'':LEVEL_LABELS[row.level]}</span>
-            <span className="font-bold">{row.count}</span>
+      const ordered = [...data]; // base a punta
+      const n = ordered.length;
+
+      return <div className="flex flex-col items-center gap-0">
+        {/* Pirámide con clip-path */}
+        {ordered.map((row, i) => {
+          const isBottom = i === n - 1; // base
+          const isTop = i === 0; // punta
+          const widthPct = 95 - (i / (n - 1)) * 80; // va de 95% en base a 15% en punta
+          const color = LEVEL_COLORS[i];
+
+          let clipPath = 'none';
+          if (isTop) {
+            clipPath = 'polygon(50% 0%, 100% 100%, 0% 100%)'; // triángulo punta
+          } else if (isBottom) {
+            clipPath = 'none'; // rectángulo base
+          } else {
+            clipPath = 'polygon(0% 0%, 100% 0%, 95% 100%, 5% 100%)'; // trapecio
+          }
+
+          return <div
+            key={row.level}
+            title={LEVEL_LABELS[row.level]+': '+row.count}
+            className="flex items-center justify-center text-white font-semibold text-sm w-full"
+            style={{
+              width: widthPct+'%',
+              background: color,
+              height: '50px',
+              clipPath: clipPath,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              alignItems: 'center',
+              textAlign: 'center',
+              borderLeft: '1px solid rgba(255,255,255,.1)',
+              borderRight: '1px solid rgba(255,255,255,.1)',
+              position: 'relative'
+            }}>
+            <div className="font-bold text-xs">{LEVEL_LABELS[row.level]}</div>
+            <div className="font-bold text-lg">{row.count}</div>
           </div>;
         })}
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] w-full">
-          {data.map((d,i)=>(
-            <div key={d.level} className="flex items-center gap-1">
-              <span className="inline-block h-2 w-2 rounded-sm" style={{background:LEVEL_COLORS[i]}}></span>
-              <span className="text-slate-600">{LEVEL_LABELS[d.level]}</span>
-              <span className="ml-auto font-semibold">{d.count}</span>
-            </div>
-          ))}
+
+        {/* Leyenda */}
+        <div className="mt-6 w-full">
+          <p className="text-center text-xs text-slate-600 mb-3 font-semibold">Total de registros: <b className="text-lg text-brand">{total}</b></p>
+          <div className="grid grid-cols-2 gap-2 text-[11px]">
+            {data.map((d,i)=>(
+              <div key={d.level} className="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                <span className="inline-block h-3 w-3 rounded-sm flex-shrink-0" style={{background:LEVEL_COLORS[i]}}></span>
+                <span className="text-slate-700">{LEVEL_LABELS[d.level]}</span>
+                <span className="ml-auto font-bold text-brand">{d.count}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[11px] text-slate-500 text-center italic">
+            🎯 Controlar la base (actos inseguros) previene llegar a la punta (fatalidad)
+          </p>
         </div>
-        <div className="mt-1 text-xs text-slate-500">Total registros: <b>{total}</b></div>
       </div>;
     }
 
