@@ -41,20 +41,29 @@
     // ---------- Logo Munters ----------
     function MuntersLogo({ size=44, showText=true, textColor='#1c73e8' }) {
       const blue = '#1c73e8';
-      // Anillo segmentado: 4 segmentos con gaps
-      return <svg height={size} viewBox={showText ? "0 0 240 54" : "0 0 54 54"} xmlns="http://www.w3.org/2000/svg">
-        <g transform="translate(27,27)">
-          {/* Anillo exterior segmentado */}
-          <circle cx="0" cy="0" r="20" fill="none" stroke={blue} strokeWidth="7.5"
-            strokeDasharray="23 7" strokeLinecap="round" transform="rotate(-90)"/>
-          {/* M interior estilizada */}
-          <path d="M-10 10 L-4.5 -9 L0 2 L4.5 -9 L10 10"
-            fill="none" stroke={blue} strokeWidth="4.5"
-            strokeLinejoin="round" strokeLinecap="round"/>
-        </g>
-        {showText && <text x="60" y="36" fontFamily="Arial,Helvetica,sans-serif"
-          fontWeight="900" fontSize="28" fill={textColor} letterSpacing="-0.5">Munters</text>}
-      </svg>;
+      // Anillo: 4 arcos de 70° c/u, huecos en esquinas diagonales (NE/SE/SW/NW)
+      // Arco E  325°→35°  : (22.12,-15.49) → (22.12,15.49)
+      // Arco S  55°→125°  : (15.49,22.12)  → (-15.49,22.12)
+      // Arco W  145°→215° : (-22.12,15.49) → (-22.12,-15.49)
+      // Arco N  235°→305° : (-15.49,-22.12)→ (15.49,-22.12)
+      return (
+        <svg height={size} viewBox={showText ? "0 0 248 68" : "0 0 68 68"} xmlns="http://www.w3.org/2000/svg">
+          <g transform="translate(34,34)" fill="none" stroke={blue} strokeLinecap="round">
+            <path d="M 22.12,-15.49 A 27,27 0 0,1 22.12,15.49"   strokeWidth="6.5"/>
+            <path d="M 15.49,22.12 A 27,27 0 0,1 -15.49,22.12"   strokeWidth="6.5"/>
+            <path d="M -22.12,15.49 A 27,27 0 0,1 -22.12,-15.49" strokeWidth="6.5"/>
+            <path d="M -15.49,-22.12 A 27,27 0 0,1 15.49,-22.12" strokeWidth="6.5"/>
+            {/* M: patas verticales externas + V central */}
+            <path d="M -12,13 L -12,-13 L 0,2 L 12,-13 L 12,13"
+              strokeWidth="5.5" strokeLinejoin="miter"/>
+          </g>
+          {showText && (
+            <text x="78" y="44"
+              fontFamily="'Arial Black', 'Franklin Gothic Heavy', Arial, sans-serif"
+              fontWeight="900" fontSize="30" fill={textColor}>Munters</text>
+          )}
+        </svg>
+      );
     }
 
     // ---------- Constantes UI ----------
