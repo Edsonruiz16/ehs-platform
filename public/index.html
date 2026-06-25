@@ -40,32 +40,26 @@
 
     // ---------- Logo Munters ----------
     function MuntersLogo({ size=44, showText=true, textColor='#1c73e8' }) {
-      const blue = '#1c73e8';
-      // Anillo: 4 arcos de 70° c/u, huecos en las 4 esquinas diagonales
-      // Arco E  325°→35°  : (22.12,-15.49)→(22.12, 15.49)
-      // Arco S   55°→125° : (15.49, 22.12)→(-15.49,22.12)
-      // Arco W  145°→215° : (-22.12,15.49)→(-22.12,-15.49)
-      // Arco N  235°→305° : (-15.49,-22.12)→(15.49,-22.12)
-      // M: patas exteriores anguladas (más anchas abajo), V profunda, cuadro en el crotch
+      const ink = textColor; // mismo color para ícono y texto (azul en claro, blanco en header)
+      // Ícono = figura SÓLIDA: anillo grueso (corte único abajo) + M en negativo con pico central.
+      //  - Anillo: stroke r=38 grosor 15 → interior 30.5 / exterior 45.5; hueco 70°→110° abajo.
+      //  - M rellena: patas exteriores ±24, interiores ±12, pico central a y=-22, pies a y=33
+      //    (los pies caen justo en los bordes del hueco inferior). Las "ventanas" blancas son
+      //    las concavidades a los lados del pico (quedan transparentes = se ve el fondo).
       return (
-        <svg height={size} viewBox={showText ? "0 0 248 68" : "0 0 68 68"} xmlns="http://www.w3.org/2000/svg">
-          <g transform="translate(34,34)" fill="none" strokeLinecap="round">
-            {/* Anillo segmentado */}
-            <path d="M 22.12,-15.49 A 27,27 0 0,1 22.12,15.49"   stroke={blue} strokeWidth="6.5"/>
-            <path d="M 15.49,22.12 A 27,27 0 0,1 -15.49,22.12"   stroke={blue} strokeWidth="6.5"/>
-            <path d="M -22.12,15.49 A 27,27 0 0,1 -22.12,-15.49" stroke={blue} strokeWidth="6.5"/>
-            <path d="M -15.49,-22.12 A 27,27 0 0,1 15.49,-22.12" stroke={blue} strokeWidth="6.5"/>
-            {/* M: patas anguladas (−16/+16 abajo, −12/+12 arriba), V profunda hasta y=5 */}
-            <path d="M -16,13 L -12,-13 L 0,5 L 12,-13 L 16,13"
-              stroke={blue} strokeWidth="6" strokeLinejoin="round"/>
-            {/* Cuadro distintivo en el crotch del M (brand guideline Munters) */}
-            <rect x="-3.5" y="2" width="7" height="7"
-              fill="white" stroke={blue} strokeWidth="2"/>
+        <svg height={size} viewBox={showText ? "0 0 380 100" : "0 0 100 100"} xmlns="http://www.w3.org/2000/svg">
+          <g transform="translate(50,50)" fill={ink}>
+            {/* Anillo grueso con corte único abajo */}
+            <path d="M -13.00,35.71 A 38,38 0 1 1 13.00,35.71"
+              fill="none" stroke={ink} strokeWidth="15" strokeLinecap="butt"/>
+            {/* M sólida en negativo (pico central hacia arriba) */}
+            <path d="M -24,-25 L -24,33 L -12,33 L -12,-6 L 0,-22 L 12,-6 L 12,33 L 24,33 L 24,-25 Z"
+              strokeLinejoin="miter"/>
           </g>
           {showText && (
-            <text x="78" y="44"
-              fontFamily="'Arial Black', 'Franklin Gothic Heavy', Arial, sans-serif"
-              fontWeight="900" fontSize="30" fill={textColor}>Munters</text>
+            <text x="112" y="72"
+              fontFamily="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
+              fontWeight="900" fontSize="68" fill={ink} letterSpacing="-1">Munters</text>
           )}
         </svg>
       );
