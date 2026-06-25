@@ -297,6 +297,17 @@ const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
   res.status(code).json({ message: e.code === 11000 ? 'Folio duplicado' : e.message });
 });
 
+// Genera el siguiente folio consecutivo para un modelo dado
+async function nextFolio(Model, prefix) {
+  const last = await Model.findOne({ folio: new RegExp('^' + prefix + '-') })
+    .sort({ createdAt: -1 })
+    .select('folio');
+  if (!last) return prefix + '-0001';
+  const parts = last.folio.split('-');
+  const num = parseInt(parts[parts.length - 1]) || 0;
+  return prefix + '-' + String(num + 1).padStart(4, '0');
+}
+
 // Filtro global a partir de query params.
 function buildFilter(q, dateField = 'date') {
   const f = {};
@@ -363,6 +374,12 @@ api.post('/auth/register', wrap(async (req, res) => {
 api.get('/me', protect, (req, res) => res.json({ user: req.user }));
 api.get('/areas', protect, wrap(async (_req, res) => res.json({ items: await Area.find().sort({ name: 1 }) })));
 
+// --- Folios automáticos ---
+api.get('/stop/next-folio',       protect, wrap(async (_,res) => res.json({ folio: await nextFolio(Stop,       'STOP')  })));
+api.get('/commission/next-folio', protect, wrap(async (_,res) => res.json({ folio: await nextFolio(Commission, 'COM')   })));
+api.get('/incidents/next-folio',  protect, wrap(async (_,res) => res.json({ folio: await nextFolio(Incident,   'INC')   })));
+api.get('/iperc/next-folio',      protect, wrap(async (_,res) => res.json({ folio: await nextFolio(Iperc,      'IPERC') })));
+
 // --- Admin: Gestión de Usuarios ---
 api.get('/users', protect, isAdmin, wrap(async (_req, res) => {
   const users = await User.find().select('+password').sort({ createdAt: -1 });
@@ -420,12 +437,17 @@ function resource(pathName, Model, opts = {}) {
     res.json({ items, total: await Model.countDocuments(f) });
   }));
   api.post(`/${pathName}`, protect, canWrite, wrap(async (req, res) => {
-    const doc = await Model.create(req.body);
+    const body = { ...req.body };
+    delete body.folio; // folio siempre lo genera el servidor
+    body.folio = await nextFolio(Model, opts.prefix || pathName.toUpperCase());
+    const doc = await Model.create(body);
     if (opts.consolidate) await opts.consolidate(doc);
     res.status(201).json({ item: doc });
   }));
   api.put(`/${pathName}/:id`, protect, canWrite, wrap(async (req, res) => {
-    const doc = await Model.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const body = { ...req.body };
+    delete body.folio; // el folio nunca se puede cambiar después de creado
+    const doc = await Model.findByIdAndUpdate(req.params.id, body, { new: true });
     if (!doc) return res.status(404).json({ message: 'No encontrado' });
     if (opts.consolidate) await opts.consolidate(doc);
     res.json({ item: doc });
@@ -437,10 +459,10 @@ function resource(pathName, Model, opts = {}) {
     res.json({ ok: true });
   }));
 }
-resource('stop', Stop, { consolidate: consolidateStop, source: 'STOP' });
-resource('commission', Commission, { consolidate: consolidateCommission, source: 'COMMISSION' });
-resource('incidents', Incident, { dateField: 'eventDate', consolidate: consolidateIncident, source: 'INCIDENT' });
-resource('iperc', Iperc, { consolidate: consolidateIperc, source: 'IPERC' });
+resource('stop', Stop, { consolidate: consolidateStop, source: 'STOP', prefix: 'STOP' });
+resource('commission', Commission, { consolidate: consolidateCommission, source: 'COMMISSION', prefix: 'COM' });
+resource('incidents', Incident, { dateField: 'eventDate', consolidate: consolidateIncident, source: 'INCIDENT', prefix: 'INC' });
+resource('iperc', Iperc, { consolidate: consolidateIperc, source: 'IPERC', prefix: 'IPERC' });
 
 // --- Acciones (motor) ---
 api.get('/actions', protect, wrap(async (req, res) => {

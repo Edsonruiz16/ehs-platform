@@ -328,14 +328,18 @@
         ] },
     };
 
-    function CrudModule({ cfg }) {
+    function CrudModule({ cfg, user }) {
       const [items,setItems]=useState([]); const [loading,setLoading]=useState(true);
       const [open,setOpen]=useState(false); const [form,setForm]=useState({}); const [err,setErr]=useState('');
-      const [q,setQ]=useState('');
+      const [q,setQ]=useState(''); const [nextFolioVal,setNextFolioVal]=useState('');
       const load=useCallback(async()=>{ setLoading(true); try{ const r=await api('/'+cfg.path,{query:{limit:300}}); setItems(r.items);} finally{ setLoading(false);} },[cfg.path]);
       useEffect(()=>{ load(); },[load]);
-      function newForm(){ const f={}; f[cfg.dateField]=new Date().toISOString().slice(0,10); setForm(f); setErr(''); setOpen(true); }
-      function edit(it){ const f={...it}; cfg.fields.forEach(([n,,t])=>{ if(t==='date'&&f[n]) f[n]=String(f[n]).slice(0,10); }); setForm(f); setErr(''); setOpen(true); }
+      async function newForm(){
+        const f={}; f[cfg.dateField]=new Date().toISOString().slice(0,10);
+        setForm(f); setErr(''); setOpen(true);
+        try{ const r=await api('/'+cfg.path+'/next-folio'); setNextFolioVal(r.folio); } catch(e){ setNextFolioVal(''); }
+      }
+      function edit(it){ const f={...it}; cfg.fields.forEach(([n,,t])=>{ if(t==='date'&&f[n]) f[n]=String(f[n]).slice(0,10); }); setForm(f); setErr(''); setNextFolioVal(''); setOpen(true); }
       async function save(e){ e.preventDefault(); setErr('');
         try{ if(form._id) await api('/'+cfg.path+'/'+form._id,{method:'PUT',body:form}); else await api('/'+cfg.path,{method:'POST',body:form});
           setOpen(false); load(); } catch(e){ setErr(e.message); } }
@@ -368,9 +372,17 @@
         {open && <Modal onClose={()=>setOpen(false)}>
           <form onSubmit={save} className="space-y-3">
             <h2 className="text-lg font-semibold">{form._id?'Editar':'Nuevo'} — {cfg.title}</h2>
+            {/* Folio automático — solo lectura */}
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-slate-500">Folio (automático)</span>
+              <div className="input flex items-center gap-2" style={{background:'#f8fafc',color:'#475569',fontWeight:'600'}}>
+                <span>🔒</span>
+                <span>{form._id ? form.folio : (nextFolioVal || 'Generando…')}</span>
+              </div>
+            </div>
             {err && <div className="badge w-full justify-center py-2" style={{background:'#fee2e2',color:'#b91c1c'}}>{err}</div>}
             <div className="grid grid-cols-2 gap-3">
-              {cfg.fields.filter(f=>f[2]!=='textarea').map(([name,label,type,req])=>
+              {cfg.fields.filter(f=>f[2]!=='textarea'&&f[0]!=='folio').map(([name,label,type,req])=>
                 <label key={name} className="flex flex-col gap-1">
                   <span className="text-xs text-slate-500">{label}{req?' *':''}</span>
                   {type==='risk' ? <select className="input" value={form[name]||'MEDIO'} onChange={e=>setForm({...form,[name]:e.target.value})}>{RISKS.map(r=><option key={r}>{r}</option>)}</select>
