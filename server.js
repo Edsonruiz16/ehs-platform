@@ -12,6 +12,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const XLSX = require('xlsx');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 4000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/ehs_platform';
@@ -148,6 +149,17 @@ const stopSchema = new Schema({
   requiredAction: String,
   responsible: String,
   dueDate: Date,
+  // Datos importados del Excel mensual de la plataforma STOP
+  checklistNo: String,
+  mainCategory: String,
+  subCategory: String,
+  subArea: String,
+  shift: String,
+  safeComment: String,
+  unsafeComment: String,
+  kind: { type: String, enum: ['SEGURA', 'INSEGURA'] },
+  imported: { type: Boolean, default: false },
+  rowKey: { type: String, index: true }, // huella de la fila importada (evita duplicados al re-importar)
 }, { timestamps: true });
 const Stop = model('ObservationStop', stopSchema);
 
@@ -375,7 +387,6 @@ api.get('/me', protect, (req, res) => res.json({ user: req.user }));
 api.get('/areas', protect, wrap(async (_req, res) => res.json({ items: await Area.find().sort({ name: 1 }) })));
 
 // --- Folios automáticos ---
-api.get('/stop/next-folio',       protect, wrap(async (_,res) => res.json({ folio: await nextFolio(Stop,       'STOP')  })));
 api.get('/commission/next-folio', protect, wrap(async (_,res) => res.json({ folio: await nextFolio(Commission, 'COM')   })));
 api.get('/incidents/next-folio',  protect, wrap(async (_,res) => res.json({ folio: await nextFolio(Incident,   'INC')   })));
 api.get('/iperc/next-folio',      protect, wrap(async (_,res) => res.json({ folio: await nextFolio(Iperc,      'IPERC') })));
@@ -459,7 +470,19 @@ function resource(pathName, Model, opts = {}) {
     res.json({ ok: true });
   }));
 }
-resource('stop', Stop, { consolidate: consolidateStop, source: 'STOP', prefix: 'STOP' });
+// STOP NO usa el recurso genérico: es solo-admin y se alimenta por importación automática (sin registro manual).
+api.get('/stop', protect, isAdmin, wrap(async (req, res) => {
+  const f = buildFilter(req.query, 'date');
+  const items = await Stop.find(f).sort({ date: -1 }).limit(1000);
+  res.json({ items, total: await Stop.countDocuments(f) });
+}));
+api.delete('/stop/:id', protect, isAdmin, wrap(async (req, res) => {
+  const doc = await Stop.findByIdAndDelete(req.params.id);
+  if (!doc) return res.status(404).json({ message: 'No encontrado' });
+  await Heinrich.deleteOne({ folio: doc.folio, source: 'STOP' });
+  await Action.deleteOne({ folio: doc.folio, source: 'STOP' });
+  res.json({ ok: true });
+}));
 resource('commission', Commission, { consolidate: consolidateCommission, source: 'COMMISSION', prefix: 'COM' });
 resource('incidents', Incident, { dateField: 'eventDate', consolidate: consolidateIncident, source: 'INCIDENT', prefix: 'INC' });
 resource('iperc', Iperc, { consolidate: consolidateIperc, source: 'IPERC', prefix: 'IPERC' });
@@ -552,12 +575,101 @@ function normLevel(v) {
   };
   return a[s] || null;
 }
-api.post('/import/preview', protect, canWrite, upload.single('file'), wrap(async (req, res) => {
+// --- Clasificación automática STOP → nivel de pirámide ---
+// Categorías de personas/comportamiento = ACTO INSEGURO; de entorno/físicas = CONDICIÓN INSEGURA.
+const STOP_ACT_CATS  = new Set(['personal protective equipment', 'reactions of people', 'positions of people', 'tools and equipment - actions', 'procedures', 'housekeeping standards']);
+const STOP_COND_CATS = new Set(['work area and structures', 'tools and equipment - conditions', 'environment']);
+// Si el comentario describe un evento real (derrame, "casi…", conato, etc.) se eleva a CASI INCIDENTE.
+// Señales inequívocas: evitamos verbos preventivos ("para no caer") que darían falsos positivos.
+const NEARMISS_RE = /\bcasi\b|\bcuasi|por poco|estuvo a punto|a punto de|amago|conato|derrame|fuga de|quemadura|corto ?circuito/i;
+function classifyStop(mainCategory, unsafeComment) {
+  if (NEARMISS_RE.test(unsafeComment || '')) return 'CASI_INCIDENTE';
+  const c = String(mainCategory || '').trim().toLowerCase();
+  if (STOP_COND_CATS.has(c)) return 'CONDICION_INSEGURA';
+  if (STOP_ACT_CATS.has(c)) return 'ACTO_INSEGURO';
+  if (/condition|area|environment|structure/.test(c)) return 'CONDICION_INSEGURA';
+  return 'ACTO_INSEGURO';
+}
+function parseStopDate(v) {
+  if (v instanceof Date && !isNaN(v)) return v;
+  const s = String(v || '').trim(); if (!s) return null;
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/); // dd/mm/yyyy
+  if (m) { let [, d, mo, y] = m; y = +y < 100 ? 2000 + +y : +y; return new Date(+y, +mo - 1, +d); }
+  const d = new Date(s); return isNaN(d) ? null : d;
+}
+function pickCol(headers, ...names) {
+  const low = headers.map((h) => String(h || '').trim().toLowerCase());
+  for (const n of names) { const i = low.indexOf(n.toLowerCase()); if (i >= 0) return i; }
+  return -1;
+}
+
+// --- Importación automática de Excel STOP (solo admin) ---
+api.post('/import/stop', protect, isAdmin, upload.single('file'), wrap(async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'Archivo no proporcionado' });
+  const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+  const hasHeaders = (row) => row.some((c) => /checklist\s*no/i.test(String(c))) && row.some((c) => /observer/i.test(String(c)));
+  let rows = null, headerIdx = -1;
+  for (const name of ['Sheet1', ...wb.SheetNames]) {
+    if (!wb.Sheets[name]) continue;
+    const r = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '', raw: false });
+    const idx = r.findIndex(hasHeaders);
+    if (idx >= 0) { rows = r; headerIdx = idx; break; }
+  }
+  if (headerIdx < 0) return res.status(400).json({ message: 'No se encontró la estructura esperada (columnas “Checklist No” y “Observer Name”). Verifica que sea el Excel de STOP.' });
+
+  const H = rows[headerIdx];
+  const col = {
+    chk: pickCol(H, 'Checklist No'), obs: pickCol(H, 'Observer Name'), date: pickCol(H, 'Date'),
+    area: pickCol(H, 'Area Name'), sub: pickCol(H, 'Sub Area Name'), shift: pickCol(H, 'Shift Name'),
+    main: pickCol(H, 'Main Category'), subCat: pickCol(H, 'Sub Category'),
+    safe: pickCol(H, 'Safe Comments', 'Safe Comment'), unsafe: pickCol(H, 'Unsafe Comments', 'Unsafe Comment'),
+  };
+  const get = (r, i) => (i >= 0 ? String(r[i] ?? '').trim() : '');
+
+  const summary = { total: 0, inserted: 0, duplicates: 0, empty: 0, safe: 0, byLevel: { ACTO_INSEGURO: 0, CONDICION_INSEGURA: 0, CASI_INCIDENTE: 0 } };
+  const errors = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i]; if (!r) continue;
+    const chk = get(r, col.chk);
+    if (!chk || !/\d/.test(chk)) continue; // fila vacía o pie de página
+    summary.total++;
+    const safe = get(r, col.safe), unsafe = get(r, col.unsafe);
+    if (!safe && !unsafe) { summary.empty++; continue; }
+    const mainCat = get(r, col.main), subCat = get(r, col.subCat);
+    // Huella de contenido: un mismo checklist puede traer varias filas (distintas categorías);
+    // deduplicamos por contenido para conservar TODOS los comentarios y que re-importar sea idempotente.
+    const rowKey = crypto.createHash('sha1').update([chk, mainCat, subCat, safe, unsafe].join('|')).digest('hex');
+    try {
+      if (await Stop.findOne({ rowKey })) { summary.duplicates++; continue; }
+      // Folio único: STOP-{checklist}, y -2, -3… si el checklist tiene varias observaciones.
+      let folio = 'STOP-' + chk, n = 2;
+      while (await Stop.findOne({ folio })) folio = 'STOP-' + chk + '-' + (n++);
+      const kind = unsafe ? 'INSEGURA' : 'SEGURA';
+      const level = kind === 'INSEGURA' ? classifyStop(mainCat, unsafe) : 'ACTO_INSEGURO';
+      const doc = await Stop.create({
+        folio, rowKey, checklistNo: chk, date: parseStopDate(r[col.date]) || new Date(),
+        observer: get(r, col.obs) || 'N/D', area: get(r, col.area) || 'N/D',
+        subArea: get(r, col.sub), shift: get(r, col.shift), mainCategory: mainCat, subCategory: subCat,
+        safeComment: safe, unsafeComment: unsafe, description: unsafe || safe,
+        level, kind, imported: true, risk: level === 'CASI_INCIDENTE' ? 'ALTO' : 'MEDIO',
+      });
+      if (kind === 'INSEGURA') { // solo las inseguras alimentan la pirámide
+        await emitHeinrich({ folio: doc.folio, date: doc.date, level: doc.level, source: 'STOP', sourceRef: doc._id, risk: doc.risk, area: doc.area, description: doc.description });
+        summary.byLevel[level] = (summary.byLevel[level] || 0) + 1;
+      } else summary.safe++;
+      summary.inserted++;
+    } catch (e) { errors.push({ row: i + 1, folio: 'STOP-' + chk, reason: e.message }); }
+  }
+  await ImportJob.create({ fileName: req.file.originalname, target: 'STOP_AUTO', total: summary.total, inserted: summary.inserted, rejectedCount: errors.length, rejected: errors });
+  res.json({ result: { ...summary, errors: errors.slice(0, 20) } });
+}));
+
+api.post('/import/preview', protect, isAdmin, upload.single('file'), wrap(async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Archivo no proporcionado' });
   const { columns, rows } = parseExcel(req.file.buffer);
   res.json({ columns, preview: rows.slice(0, 10), totalRows: rows.length });
 }));
-api.post('/import/commit', protect, canWrite, upload.single('file'), wrap(async (req, res) => {
+api.post('/import/commit', protect, isAdmin, upload.single('file'), wrap(async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Archivo no proporcionado' });
   const target = req.body.target;
   const mapping = typeof req.body.mapping === 'string' ? JSON.parse(req.body.mapping || '{}') : (req.body.mapping || {});
