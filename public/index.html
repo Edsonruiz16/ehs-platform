@@ -340,6 +340,7 @@
     };
 
     function CrudModule({ cfg, user }) {
+      const canWrite = user && user.role !== 'CONSULTA'; // CONSULTA = solo lectura
       const [items,setItems]=useState([]); const [loading,setLoading]=useState(true);
       const [open,setOpen]=useState(false); const [form,setForm]=useState({}); const [err,setErr]=useState('');
       const [q,setQ]=useState(''); const [nextFolioVal,setNextFolioVal]=useState('');
@@ -362,7 +363,7 @@
           <div><h1 className="text-2xl font-bold">{cfg.title}</h1><p className="text-sm text-slate-500">{cfg.subtitle}</p></div>
           <div className="flex gap-2">
             <input className="input" placeholder="Buscar folio…" value={q} onChange={e=>setQ(e.target.value)} style={{width:'180px'}}/>
-            <button className="btn btn-primary" onClick={newForm}>+ Nuevo</button>
+            {canWrite && <button className="btn btn-primary" onClick={newForm}>+ Nuevo</button>}
           </div>
         </div>
         <div className="card p-0 overflow-x-auto">
@@ -373,8 +374,8 @@
               : filtered.map(it=><tr key={it._id} className="hover:bg-slate-50">
                   {cfg.columns.map(c=><td key={c[0]}>{cell(it,c[0],c[2])}</td>)}
                   <td className="text-right whitespace-nowrap">
-                    <button className="text-brand-light hover:underline text-xs mr-3" onClick={()=>edit(it)}>Editar</button>
-                    <button className="text-red-500 hover:underline text-xs" onClick={()=>del(it._id)}>Eliminar</button>
+                    {canWrite && <button className="text-brand-light hover:underline text-xs mr-3" onClick={()=>edit(it)}>Editar</button>}
+                    {canWrite && <button className="text-red-500 hover:underline text-xs" onClick={()=>del(it._id)}>Eliminar</button>}
                   </td>
                 </tr>)}
             </tbody>
@@ -418,7 +419,8 @@
     }
 
     // ---------- Acciones (motor) ----------
-    function Actions() {
+    function Actions({ user }) {
+      const canWrite = user && user.role !== 'CONSULTA'; // CONSULTA = solo lectura
       const [items,setItems]=useState([]); const [sum,setSum]=useState(null); const [f,setF]=useState({});
       const load=useCallback(async()=>{ const [l,s]=await Promise.all([api('/actions',{query:f}),api('/actions/summary')]); setItems(l.items); setSum(s); },[JSON.stringify(f)]);
       useEffect(()=>{ load(); },[load]);
@@ -444,7 +446,7 @@
                 <td className="truncate" style={{maxWidth:'240px'}} title={a.requiredAction}>{a.requiredAction}</td>
                 <td><Badge text={a.risk} color={RISK_COLORS[a.risk]}/></td><td>{a.responsible}</td><td>{fmtDate(a.dueDate)}</td>
                 <td><Badge text={a.dueState} color={DUE_COLORS[a.dueState]}/></td><td><Badge text={a.status} color={STATUS_COLORS[a.status]}/></td>
-                <td><select className="text-xs border border-slate-200 rounded px-1 py-1" value={a.status} onChange={e=>chg(a._id,e.target.value)}>{['ABIERTA','EN_PROCESO','CERRADA'].map(s=><option key={s}>{s}</option>)}</select></td>
+                <td>{canWrite && <select className="text-xs border border-slate-200 rounded px-1 py-1" value={a.status} onChange={e=>chg(a._id,e.target.value)}>{['ABIERTA','EN_PROCESO','CERRADA'].map(s=><option key={s}>{s}</option>)}</select>}</td>
               </tr>)}
               {items.length===0 && <tr><td colSpan={10} className="text-center text-slate-500 py-8">Sin acciones</td></tr>}
             </tbody>
@@ -801,10 +803,10 @@
         <main className="p-5 max-w-[1600px] mx-auto">
           {tab==='dashboard' && <Dashboard/>}
           {tab==='stop' && <StopImport user={user}/>}
-          {tab==='commission' && <CrudModule cfg={MODULES.commission}/>}
-          {tab==='incidents' && <CrudModule cfg={MODULES.incidents}/>}
-          {tab==='iperc' && <CrudModule cfg={MODULES.iperc}/>}
-          {tab==='actions' && <Actions/>}
+          {tab==='commission' && <CrudModule cfg={MODULES.commission} user={user}/>}
+          {tab==='incidents' && <CrudModule cfg={MODULES.incidents} user={user}/>}
+          {tab==='iperc' && <CrudModule cfg={MODULES.iperc} user={user}/>}
+          {tab==='actions' && <Actions user={user}/>}
           {tab==='import' && user.role==='ADMIN' && <ImportView/>}
           {tab==='admin' && user.role==='ADMIN' && <Admin/>}
         </main>
