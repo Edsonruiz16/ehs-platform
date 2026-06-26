@@ -488,8 +488,9 @@ function resource(pathName, Model, opts = {}) {
     res.json({ ok: true });
   }));
 }
-// STOP NO usa el recurso genérico: es solo-admin y se alimenta por importación automática (sin registro manual).
-api.get('/stop', protect, isAdmin, wrap(async (req, res) => {
+// STOP no usa el recurso genérico: se alimenta por importación automática (sin registro manual).
+// Lectura: cualquier usuario autenticado. Importar/eliminar: solo ADMIN.
+api.get('/stop', protect, wrap(async (req, res) => {
   const f = buildFilter(req.query, 'date');
   const items = await Stop.find(f).sort({ date: -1 }).limit(1000);
   res.json({ items, total: await Stop.countDocuments(f) });
