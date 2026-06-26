@@ -19,6 +19,23 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/ehs_pl
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
 
+// Copia recuperable de contraseñas (solo visible para el ADMIN). El hash bcrypt no es reversible,
+// así que ciframos una copia con AES-256-GCM usando una clave derivada del JWT_SECRET.
+function pwKey() { return crypto.createHash('sha256').update('pwview:' + JWT_SECRET).digest(); }
+function encPw(plain) {
+  try { const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', pwKey(), iv);
+    const ct = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
+    return iv.toString('hex') + ':' + c.getAuthTag().toString('hex') + ':' + ct.toString('hex'); }
+  catch { return undefined; }
+}
+function decPw(blob) {
+  try { if (!blob || blob.split(':').length !== 3) return null; const [iv, tag, ct] = blob.split(':');
+    const d = crypto.createDecipheriv('aes-256-gcm', pwKey(), Buffer.from(iv, 'hex')); d.setAuthTag(Buffer.from(tag, 'hex'));
+    return Buffer.concat([d.update(Buffer.from(ct, 'hex')), d.final()]).toString('utf8'); }
+  catch { return null; }
+}
+const userView = (u) => ({ id: u._id, name: u.name, email: u.email, role: u.role, area: u.area, active: u.active, password: u.password, viewPassword: decPw(u.passwordPlain) });
+
 // ---------------------------------------------------------------------------
 // Seguridad: Rate limiting y control de intentos fallidos
 // ---------------------------------------------------------------------------
@@ -87,6 +104,7 @@ const userSchema = new Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true, select: false },
+  passwordPlain: { type: String, select: false }, // copia cifrada (AES) para que el admin pueda consultarla
   role: { type: String, enum: ROLES, default: 'CAPTURISTA' },
   area: String,
   active: { type: Boolean, default: true },
@@ -380,7 +398,7 @@ api.post('/auth/register', wrap(async (req, res) => {
   if (existing) return res.status(409).json({ message: 'Email ya registrado' });
 
   const hash = (p) => bcrypt.hashSync(p, 10);
-  const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), role: 'CAPTURISTA' });
+  const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), passwordPlain: encPw(password), role: 'CAPTURISTA' });
   res.status(201).json({ token: sign(user), user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 }));
 api.get('/me', protect, (req, res) => res.json({ user: req.user }));
@@ -393,8 +411,8 @@ api.get('/iperc/next-folio',      protect, wrap(async (_,res) => res.json({ foli
 
 // --- Admin: Gestión de Usuarios ---
 api.get('/users', protect, isAdmin, wrap(async (_req, res) => {
-  const users = await User.find().select('+password').sort({ createdAt: -1 });
-  res.json({ items: users.map(u => ({ id: u._id, name: u.name, email: u.email, role: u.role, password: u.password, area: u.area, active: u.active })) });
+  const users = await User.find().select('+password +passwordPlain').sort({ createdAt: -1 });
+  res.json({ items: users.map(userView) });
 }));
 api.post('/users', protect, isAdmin, wrap(async (req, res) => {
   const { name, email, password, role, area } = req.body;
@@ -409,8 +427,8 @@ api.post('/users', protect, isAdmin, wrap(async (req, res) => {
   const existing = await User.findOne({ email: (email || '').toLowerCase() });
   if (existing) return res.status(409).json({ message: 'Email ya registrado' });
   const hash = (p) => bcrypt.hashSync(p, 10);
-  const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), role: role || 'CAPTURISTA', area });
-  res.status(201).json({ item: { id: user._id, name: user.name, email: user.email, role: user.role, password: user.password, area: user.area, active: user.active } });
+  const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), passwordPlain: encPw(password), role: role || 'CAPTURISTA', area });
+  res.status(201).json({ item: userView(user) });
 }));
 api.patch('/users/:id', protect, isAdmin, wrap(async (req, res) => {
   const { name, email, role, area, active } = req.body;
@@ -420,17 +438,17 @@ api.patch('/users/:id', protect, isAdmin, wrap(async (req, res) => {
   if (role) update.role = role;
   if (area) update.area = area;
   if (active !== undefined) update.active = active;
-  const user = await User.findByIdAndUpdate(req.params.id, update, { new: true }).select('+password');
+  const user = await User.findByIdAndUpdate(req.params.id, update, { new: true }).select('+password +passwordPlain');
   if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
-  res.json({ item: { id: user._id, name: user.name, email: user.email, role: user.role, password: user.password, area: user.area, active: user.active } });
+  res.json({ item: userView(user) });
 }));
 api.patch('/users/:id/password', protect, isAdmin, wrap(async (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ message: 'Contraseña requerida' });
   const hash = (p) => bcrypt.hashSync(p, 10);
-  const user = await User.findByIdAndUpdate(req.params.id, { password: hash(password) }, { new: true }).select('+password');
+  const user = await User.findByIdAndUpdate(req.params.id, { password: hash(password), passwordPlain: encPw(password) }, { new: true }).select('+password +passwordPlain');
   if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
-  res.json({ item: { id: user._id, name: user.name, email: user.email, role: user.role, password: user.password, area: user.area, active: user.active } });
+  res.json({ item: userView(user) });
 }));
 api.delete('/users/:id', protect, isAdmin, wrap(async (req, res) => {
   const user = await User.findByIdAndDelete(req.params.id);
@@ -726,9 +744,9 @@ async function seedIfEmpty() {
   const adminPass = process.env.SEED_ADMIN_PASSWORD || 'Admin123*';
   const hash = (p) => bcrypt.hashSync(p, 10);
   await User.create([
-    { name: 'Administrador EHS', email: adminEmail, password: hash(adminPass), role: 'ADMIN' },
-    { name: 'Capturista Demo', email: 'capturista@ehs.local', password: hash('Captura123*'), role: 'CAPTURISTA', area: 'PROD' },
-    { name: 'Gerencia Demo', email: 'gerencia@ehs.local', password: hash('Consulta123*'), role: 'CONSULTA' },
+    { name: 'Administrador EHS', email: adminEmail, password: hash(adminPass), passwordPlain: encPw(adminPass), role: 'ADMIN' },
+    { name: 'Capturista Demo', email: 'capturista@ehs.local', password: hash('Captura123*'), passwordPlain: encPw('Captura123*'), role: 'CAPTURISTA', area: 'PROD' },
+    { name: 'Gerencia Demo', email: 'gerencia@ehs.local', password: hash('Consulta123*'), passwordPlain: encPw('Consulta123*'), role: 'CONSULTA' },
   ]);
 
   const AREAS = [['PROD', 'Producción'], ['MANT', 'Mantenimiento'], ['ALM', 'Almacén'], ['CALID', 'Calidad'], ['LOG', 'Logística']];

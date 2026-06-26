@@ -625,6 +625,7 @@
       const [err, setErr] = useState('');
       const [changePass, setChangePass] = useState(null);
       const [newPass, setNewPass] = useState('');
+      const [reveal, setReveal] = useState({});
 
       const load = useCallback(async() => {
         setLoading(true);
@@ -705,7 +706,15 @@
               : users.map(u => <tr key={u.id} className="hover:bg-slate-50">
                   <td className="font-medium">{u.name}</td>
                   <td>{u.email}</td>
-                  <td className="font-mono text-xs" title={u.password}>{u.password ? u.password.substring(0, 8) + '…' : '—'}</td>
+                  <td className="font-mono text-xs">
+                    {u.viewPassword
+                      ? <span className="inline-flex items-center gap-2">
+                          <span>{reveal[u.id] ? u.viewPassword : '•'.repeat(Math.min(10, u.viewPassword.length))}</span>
+                          <button type="button" className="text-slate-400 hover:text-slate-700" title={reveal[u.id] ? 'Ocultar' : 'Ver contraseña'} onClick={() => setReveal(r => ({...r, [u.id]: !r[u.id]}))}>{reveal[u.id] ? '🙈' : '👁️'}</button>
+                          <button type="button" className="text-slate-400 hover:text-slate-700" title="Copiar" onClick={() => { if (navigator.clipboard) navigator.clipboard.writeText(u.viewPassword); }}>📋</button>
+                        </span>
+                      : <span className="text-slate-400" title="Esta contraseña se creó antes de activar esta función. Usa “Cambiar pass” para definir una nueva y poder verla.">— (restablecer)</span>}
+                  </td>
                   <td><Badge text={u.role} color={u.role === 'ADMIN' ? '#dc2626' : '#0f3d5e'}/></td>
                   <td>{u.area || '—'}</td>
                   <td>{u.active !== false ? '✓' : '✗'}</td>
