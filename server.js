@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 4000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/ehs_platform';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '365d';
 
 // Copia recuperable de contraseñas (solo visible para el ADMIN). El hash bcrypt no es reversible,
 // así que ciframos una copia con AES-256-GCM usando una clave derivada del JWT_SECRET.
