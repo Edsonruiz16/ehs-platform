@@ -72,6 +72,13 @@
       let payload; if (form) payload = form; else if (body) { headers['Content-Type']='application/json'; payload = JSON.stringify(body); }
       const res = await fetch(url, { method, headers, body: payload });
       const json = await res.json().catch(()=>({}));
+      // Sesión expirada: limpiar y volver al login (evita quedar "dentro" sin poder cargar nada)
+      if (res.status === 401 && t && !path.startsWith('/auth/')) {
+        localStorage.removeItem('ehs_token'); localStorage.removeItem('ehs_user');
+        alert('Tu sesión expiró por seguridad. Inicia sesión de nuevo.');
+        location.reload();
+        return new Promise(()=>{}); // detiene la cadena hasta recargar
+      }
       if (!res.ok) throw new Error(json.message || ('Error '+res.status));
       return json;
     }
