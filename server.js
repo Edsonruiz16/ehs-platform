@@ -398,7 +398,7 @@ api.post('/auth/register', wrap(async (req, res) => {
   if (existing) return res.status(409).json({ message: 'Email ya registrado' });
 
   const hash = (p) => bcrypt.hashSync(p, 10);
-  const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), passwordPlain: encPw(password), role: 'CAPTURISTA' });
+  const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), passwordPlain: encPw(password), role: 'CONSULTA' });
   res.status(201).json({ token: sign(user), user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 }));
 api.get('/me', protect, (req, res) => res.json({ user: req.user }));
@@ -419,7 +419,7 @@ api.post('/users', protect, isAdmin, wrap(async (req, res) => {
   if (!name || !email || !password) return res.status(400).json({ message: 'Nombre, email y contraseña requeridos' });
   if (!validateEmail(email)) return res.status(400).json({ message: 'Email inválido' });
   if (name.length < 2 || name.length > 100) return res.status(400).json({ message: 'Nombre debe tener 2-100 caracteres' });
-  if (!['ADMIN', 'CAPTURISTA', 'CONSULTA'].includes(role || 'CAPTURISTA')) return res.status(400).json({ message: 'Rol inválido' });
+  if (!['ADMIN', 'CAPTURISTA', 'CONSULTA'].includes(role || 'CONSULTA')) return res.status(400).json({ message: 'Rol inválido' });
 
   const passErr = validatePassword(password);
   if (passErr) return res.status(400).json({ message: 'Contraseña débil: ' + passErr });
@@ -427,7 +427,7 @@ api.post('/users', protect, isAdmin, wrap(async (req, res) => {
   const existing = await User.findOne({ email: (email || '').toLowerCase() });
   if (existing) return res.status(409).json({ message: 'Email ya registrado' });
   const hash = (p) => bcrypt.hashSync(p, 10);
-  const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), passwordPlain: encPw(password), role: role || 'CAPTURISTA', area });
+  const user = await User.create({ name, email: email.toLowerCase(), password: hash(password), passwordPlain: encPw(password), role: role || 'CONSULTA', area });
   res.status(201).json({ item: userView(user) });
 }));
 api.patch('/users/:id', protect, isAdmin, wrap(async (req, res) => {
