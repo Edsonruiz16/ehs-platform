@@ -458,6 +458,7 @@
       const [items,setItems]=useState([]); const [loading,setLoading]=useState(true);
       const [file,setFile]=useState(null); const [busy,setBusy]=useState(false);
       const [result,setResult]=useState(null); const [err,setErr]=useState('');
+      const [f,setF]=useState({}); const setFil=(k,v)=>setF(p=>({...p,[k]:v||undefined}));
       const fileRef=useRef(null);
       const load=useCallback(async()=>{ setLoading(true); try{ const r=await api('/stop',{query:{limit:1000}}); setItems(r.items); } catch(e){ setErr(e.message);} finally{ setLoading(false);} },[]);
       useEffect(()=>{ load(); },[load]);
@@ -473,6 +474,20 @@
       const Stat=({label,value,color})=><div className="card" style={{padding:'.7rem .9rem'}}>
         <div className="text-[11px] uppercase tracking-wide text-slate-500">{label}</div>
         <div className="text-2xl font-bold" style={{color:color||'#0f3d5e'}}>{value??0}</div></div>;
+
+      const observers=[...new Set(items.map(it=>it.observer).filter(Boolean))].sort();
+      const filtered=items.filter(it=>{
+        if(f.id){ const hay=((it.checklistNo||'')+' '+(it.folio||'')).toLowerCase(); if(!hay.includes(f.id.toLowerCase())) return false; }
+        if(f.observer && it.observer!==f.observer) return false;
+        if(f.kind && it.kind!==f.kind) return false;
+        if(f.level){ if(it.kind!=='INSEGURA' || it.level!==f.level) return false; }
+        if(f.from && it.date && new Date(it.date) < new Date(f.from)) return false;
+        if(f.to && it.date){ const t=new Date(f.to); t.setHours(23,59,59,999); if(new Date(it.date) > t) return false; }
+        if(f.text){ const hay=((it.unsafeComment||'')+' '+(it.safeComment||'')+' '+(it.mainCategory||'')+' '+(it.subCategory||'')).toLowerCase(); if(!hay.includes(f.text.toLowerCase())) return false; }
+        return true;
+      });
+      const anyFilter=Object.values(f).some(v=>v);
+
       return <div className="space-y-4">
         <div><h1 className="text-2xl font-bold">Observaciones STOP</h1>
           <p className="text-sm text-slate-500">Importación automática desde Excel · solo administradores</p></div>
@@ -505,10 +520,23 @@
         </div>
 
         <div className="card">
-          <div className="card-title">Comentarios registrados ({items.length})</div>
+          <div className="card-title">Comentarios registrados ({filtered.length}{anyFilter?' de '+items.length:''})</div>
+          <div className="flex flex-wrap gap-3 items-end mb-4">
+            <Field label="Desde"><input type="date" className="input" value={f.from||''} onChange={e=>setFil('from',e.target.value)}/></Field>
+            <Field label="Hasta"><input type="date" className="input" value={f.to||''} onChange={e=>setFil('to',e.target.value)}/></Field>
+            <Field label="ID / Checklist"><input className="input" placeholder="ej. 30444" value={f.id||''} onChange={e=>setFil('id',e.target.value)}/></Field>
+            <Field label="Observador"><select className="input" value={f.observer||''} onChange={e=>setFil('observer',e.target.value)}>
+              <option value="">Todos</option>{observers.map(o=><option key={o} value={o}>{o}</option>)}</select></Field>
+            <Field label="Tipo"><select className="input" value={f.kind||''} onChange={e=>setFil('kind',e.target.value)}>
+              <option value="">Todos</option><option value="INSEGURA">Insegura</option><option value="SEGURA">Segura</option></select></Field>
+            <Field label="Nivel"><select className="input" value={f.level||''} onChange={e=>setFil('level',e.target.value)}>
+              <option value="">Todos</option><option value="ACTO_INSEGURO">Acto inseguro</option><option value="CONDICION_INSEGURA">Condición insegura</option><option value="CASI_INCIDENTE">Casi incidente</option></select></Field>
+            <Field label="Buscar en comentario"><input className="input" placeholder="palabra…" value={f.text||''} onChange={e=>setFil('text',e.target.value)}/></Field>
+            {anyFilter && <button className="btn btn-ghost" onClick={()=>setF({})}>Limpiar filtros</button>}
+          </div>
           <div className="overflow-x-auto"><table>
             <thead><tr><th>Checklist</th><th>Fecha</th><th>Observador</th><th>Área</th><th>Categoría</th><th>Tipo</th><th>Nivel</th><th>Comentario</th><th></th></tr></thead>
-            <tbody>{items.map(it=><tr key={it._id}>
+            <tbody>{filtered.map(it=><tr key={it._id}>
               <td className="font-mono text-xs">{it.checklistNo||it.folio}</td>
               <td className="whitespace-nowrap">{it.date?new Date(it.date).toLocaleDateString('es-MX'):''}</td>
               <td>{it.observer}</td><td>{it.area}</td>
@@ -522,6 +550,7 @@
             </tr>)}</tbody>
           </table></div>
           {loading && <p className="text-sm text-slate-500 py-3">Cargando…</p>}
+          {!loading && items.length>0 && !filtered.length && <p className="text-sm text-slate-500 py-3">No hay resultados con esos filtros. <button className="text-blue-600 underline" onClick={()=>setF({})}>Limpiar</button></p>}
           {!loading && !items.length && <p className="text-sm text-slate-500 py-3">Aún no hay observaciones. Importa el Excel mensual de STOP.</p>}
         </div>
       </div>;
